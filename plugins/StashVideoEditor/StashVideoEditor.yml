@@ -11,7 +11,7 @@ ui:
   css:
     - videoEditor.css
 exec:
-  - python
+  - python3
   - "{pluginDir}/video_editor.py"
 interface: raw
 tasks:
