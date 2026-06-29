@@ -1,7 +1,24 @@
 // cropMath.test.js
 const test = require("node:test");
 const assert = require("node:assert");
-const { evenRound, getRenderedVideoRect, rectToSourceCrop, stretchOutputDims, resizeBox } = require("./cropMath.js");
+const { evenRound, getRenderedVideoRect, rectToSourceCrop, stretchOutputDims, resizeBox, detectSharpContentBox } = require("./cropMath.js");
+
+// Build a grayscale RGBA frame; `val(x,y)` returns the 0–255 luma for each pixel.
+// Use a checkerboard (high local detail = "sharp") for content and a constant
+// value (no detail = blurred/black bar) for the surround.
+function grayFrame(w, h, val) {
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const v = val(x, y);
+      data[i] = v; data[i + 1] = v; data[i + 2] = v; data[i + 3] = 255;
+    }
+  }
+  return data;
+}
+const BAR = 100;                                   // flat region (blur/black bar): no detail
+const checker = (x, y) => ((x + y) % 2 ? 200 : 0); // sharp content: max local detail
 
 const BOUNDS = { x: 0, y: 0, w: 500, h: 500 };
 const MIN = 20;
@@ -118,4 +135,33 @@ test("resizeBox: bounds with an offset origin (letterboxed video) clamp correctl
   const box = { x: 0, y: 175, w: 800, h: 450 };    // full-frame
   // drag the top edge up past the letterbox top — should clamp at y=175, not 0
   assert.deepStrictEqual(resizeBox(box, "n", 0, -100, bounds, MIN), { x: 0, y: 175, w: 800, h: 450 });
+});
+
+// detectSharpContentBox finds the sharp (high local detail) region, treating both
+// black bars (flat) and blurred padding (low detail) as surround to strip.
+test("detectSharpContentBox: letterbox — sharp content rows inside flat top/bottom bars", () => {
+  // rows 2..5 carry horizontal detail; rows 0,1,6,7 are a flat bar value
+  const data = grayFrame(8, 8, (x, y) => (y >= 2 && y <= 5) ? checker(x, y) : BAR);
+  assert.deepStrictEqual(detectSharpContentBox(data, 8, 8), { x: 0, y: 2, w: 8, h: 4 });
+});
+
+test("detectSharpContentBox: pillarbox — sharp content cols inside flat left/right bars", () => {
+  const data = grayFrame(8, 8, (x, y) => (x >= 1 && x <= 6) ? checker(x, y) : BAR);
+  assert.deepStrictEqual(detectSharpContentBox(data, 8, 8), { x: 1, y: 0, w: 6, h: 8 });
+});
+
+test("detectSharpContentBox: blurred padding (flat surround, sharp center) on all sides", () => {
+  const inCenter = (x, y) => x >= 2 && x <= 5 && y >= 2 && y <= 5;
+  const data = grayFrame(8, 8, (x, y) => inCenter(x, y) ? checker(x, y) : BAR);
+  assert.deepStrictEqual(detectSharpContentBox(data, 8, 8), { x: 2, y: 2, w: 4, h: 4 });
+});
+
+test("detectSharpContentBox: uniformly sharp frame → full frame (nothing to crop)", () => {
+  const data = grayFrame(8, 8, (x, y) => checker(x, y));
+  assert.deepStrictEqual(detectSharpContentBox(data, 8, 8), { x: 0, y: 0, w: 8, h: 8 });
+});
+
+test("detectSharpContentBox: flat/low-detail frame → full frame (safe no-op)", () => {
+  const data = grayFrame(8, 8, () => BAR);
+  assert.deepStrictEqual(detectSharpContentBox(data, 8, 8), { x: 0, y: 0, w: 8, h: 8 });
 });

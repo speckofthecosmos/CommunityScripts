@@ -50,6 +50,9 @@
     const [outW, setOutW] = useState("");            // crop-mode numeric override
     const [outH, setOutH] = useState("");
     const [outDims, setOutDims] = useState(null);    // {width,height} derived in stretch mode
+    const [playing, setPlaying] = useState(false);   // our own transport (native controls removed)
+    const [curTime, setCurTime] = useState(0);
+    const [duration, setDuration] = useState(0);
 
     const drag = useRef(null);
     const videoRef = useRef(null);
@@ -75,6 +78,23 @@
       const nat = { w: v.videoWidth, h: v.videoHeight };
       naturalRef.current = nat;
       setNatural(nat);
+      setDuration(v.duration || 0);
+    };
+
+    const fmtTime = (s) => {
+      if (!isFinite(s)) return "0:00";
+      const m = Math.floor(s / 60);
+      const sec = Math.floor(s % 60);
+      return m + ":" + (sec < 10 ? "0" + sec : sec);
+    };
+    const togglePlay = () => {
+      const v = videoRef.current; if (!v) return;
+      if (v.paused) v.play(); else v.pause();
+    };
+    const seek = (e) => {
+      const t = parseFloat(e.target.value);
+      if (videoRef.current) videoRef.current.currentTime = t;
+      setCurTime(t);
     };
 
     // Initialize the box to the full rendered frame once the video's natural size is known.
@@ -109,7 +129,38 @@
       window.removeEventListener("mouseup", onUp);
     };
 
+    // Auto-crop: sample the current frame to a canvas, detect the sharp content box
+    // (strips black bars AND blurred-zoom padding), and snap the crop box to it.
+    // Detection is a starting point — the 8 handles stay live for fine-tuning.
+    const autoCrop = () => {
+      const v = videoRef.current;
+      if (!v || !natural || !rendered) return;
+      const sw = Math.min(natural.w, 320); // downscale: bar detection doesn't need full res
+      const sh = Math.max(1, Math.round(natural.h * sw / natural.w));
+      const canvas = document.createElement("canvas");
+      canvas.width = sw; canvas.height = sh;
+      const ctx = canvas.getContext("2d");
+      try {
+        ctx.drawImage(v, 0, 0, sw, sh);
+        const img = ctx.getImageData(0, 0, sw, sh); // same-origin stream → not tainted
+        const cb = cm.detectSharpContentBox(img.data, sw, sh);
+        const sx = natural.w / sw, sy = natural.h / sh;   // sample px → source px
+        const scale = rendered.w / natural.w;             // source px → container px
+        const nb = {
+          x: rendered.x + cb.x * sx * scale,
+          y: rendered.y + cb.y * sy * scale,
+          w: cb.w * sx * scale,
+          h: cb.h * sy * scale,
+        };
+        setBox(nb);
+        commit(nb, "crop", rendered);
+      } catch (err) {
+        console.error("[StashVideoEditor] auto-crop failed", err);
+      }
+    };
+
     const toggleMode = () => {
+      setPlaying(false); // the <video> remounts across modes; resync transport state
       if (mode === "crop") {
         const fc = cm.rectToSourceCrop(box, rendered, natural);
         frozen.current = { crop: fc, baseFrame: { w: box.w, h: box.h } };
@@ -141,14 +192,21 @@
       }
     };
 
-    // Shared <video> handlers — preserve the playhead when the element remounts across modes.
+    // Shared <video> handlers. Native controls are intentionally OFF so the player's
+    // control bar never overlaps the crop box — transport lives below the stage instead.
+    // Preserve the playhead when the element remounts across modes.
     const videoProps = {
       ref: videoRef,
       src: streamUrl,
-      controls: true,
       onLoadedMetadata: onMeta,
       onLoadedData: () => { if (videoRef.current) videoRef.current.currentTime = timeRef.current; },
-      onTimeUpdate: () => { if (videoRef.current) timeRef.current = videoRef.current.currentTime; },
+      onTimeUpdate: () => {
+        const v = videoRef.current; if (!v) return;
+        timeRef.current = v.currentTime;
+        setCurTime(v.currentTime);
+      },
+      onPlay: () => setPlaying(true),
+      onPause: () => setPlaying(false),
     };
 
     // --- Stage rendering -----------------------------------------------------
@@ -201,9 +259,24 @@
         React.createElement("div", { className: "sve-stage", style: { width: CONTAINER.w, height: CONTAINER.h } },
           ...stageChildren
         ),
-        React.createElement("div", { className: "sve-modebar" },
+        React.createElement("div", { className: "sve-transport" },
           React.createElement(Button, {
-            variant: mode === "stretch" ? "primary" : "outline-secondary",
+            variant: "secondary", size: "sm", className: "sve-play-btn",
+            disabled: !natural, onClick: togglePlay,
+          }, playing ? "❚❚" : "►"),
+          React.createElement("input", {
+            type: "range", className: "sve-seek", min: 0, max: duration || 0, step: 0.05,
+            value: curTime, disabled: !duration, onChange: seek,
+          }),
+          React.createElement("span", { className: "sve-time" }, fmtTime(curTime) + " / " + fmtTime(duration))
+        ),
+        React.createElement("div", { className: "sve-modebar" },
+          mode === "crop" && React.createElement(Button, {
+            variant: "info", size: "sm", className: "sve-autocrop-btn",
+            disabled: !natural, onClick: autoCrop, title: "Snap the crop to the sharp content, removing black bars or blurred padding",
+          }, "Auto-crop bars"),
+          React.createElement(Button, {
+            variant: mode === "stretch" ? "primary" : "secondary",
             size: "sm", className: "sve-mode-btn", disabled: !box, onClick: toggleMode,
           }, mode === "stretch" ? "Stretching — switch to Crop" : "Switch to Stretch"),
         ),

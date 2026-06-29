@@ -27,7 +27,12 @@
 .sve-handle-sw { left: -7px;  bottom: -7px; cursor: nesw-resize; }
 .sve-handle-w  { left: -7px;  top: 50%;     transform: translateY(-50%); cursor: ew-resize; }
 
-.sve-modebar { margin-top: 12px; }
+.sve-transport { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.sve-play-btn { min-width: 2.6em; font-family: monospace; }
+.sve-seek { flex: 1; }
+.sve-time { font-variant-numeric: tabular-nums; font-size: .85em; color: var(--gray-11, #888); min-width: 7.5em; text-align: right; }
+
+.sve-modebar { display: flex; gap: 10px; margin-top: 12px; }
 .sve-mode-btn { font-weight: 600; }
 
 .sve-controls { margin-top: 12px; }

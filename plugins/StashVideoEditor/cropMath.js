@@ -82,7 +82,52 @@
     return { x: l, y: t, w: r - l, h: b - t };
   }
 
-  const api = { evenRound: evenRound, getRenderedVideoRect: getRenderedVideoRect, rectToSourceCrop: rectToSourceCrop, stretchOutputDims: stretchOutputDims, resizeBox: resizeBox };
+  // Find the sharp (high local detail) region of an RGBA frame, treating both black
+  // bars (flat) and blurred padding (low detail) as surround. Returns {x,y,w,h} in
+  // frame px. A frame with no clear detail boundary falls back to the full frame.
+  //
+  // Decoupled gradients on purpose: the ROW profile measures HORIZONTAL detail and the
+  // COLUMN profile measures VERTICAL detail. This keeps the seam between a bar and the
+  // content (a transition along the *other* axis) from bleeding one bar row/col into the
+  // detected box. Forward differences (not central) so 1px-fine texture isn't missed.
+  function detectSharpContentBox(data, w, h, k) {
+    if (k == null) k = 0.15; // relative threshold: content edge = energy >= k * peak
+    const lum = new Float64Array(w * h);
+    for (let p = 0; p < w * h; p++) {
+      const i = p * 4;
+      lum[p] = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    }
+    const rowE = new Float64Array(h); // mean horizontal gradient per row
+    const colE = new Float64Array(w); // mean vertical gradient per column
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (x + 1 < w) {
+          const gh = Math.abs(lum[y * w + x + 1] - lum[y * w + x]);
+          rowE[y] += gh;
+        }
+        if (y + 1 < h) {
+          const gv = Math.abs(lum[(y + 1) * w + x] - lum[y * w + x]);
+          colE[x] += gv;
+        }
+      }
+    }
+
+    // First/last index whose energy clears k * peak; fall back to full span if flat.
+    function span(energy, n) {
+      let peak = 0;
+      for (let i = 0; i < n; i++) if (energy[i] > peak) peak = energy[i];
+      if (peak <= 0) return { lo: 0, hi: n - 1 };
+      const t = k * peak;
+      let lo = 0; while (lo < n && energy[lo] < t) lo++;
+      let hi = n - 1; while (hi > lo && energy[hi] < t) hi--;
+      return { lo: lo, hi: hi };
+    }
+    const ys = span(rowE, h);
+    const xs = span(colE, w);
+    return { x: xs.lo, y: ys.lo, w: xs.hi - xs.lo + 1, h: ys.hi - ys.lo + 1 };
+  }
+
+  const api = { evenRound: evenRound, getRenderedVideoRect: getRenderedVideoRect, rectToSourceCrop: rectToSourceCrop, stretchOutputDims: stretchOutputDims, resizeBox: resizeBox, detectSharpContentBox: detectSharpContentBox };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.SVECropMath = api;
 })(typeof window !== "undefined" ? window : null);
