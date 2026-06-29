@@ -52,20 +52,21 @@ def find_edited_scenes_query():
     }"""
     return q, {}
 
-def scene_merge_mutation(source_ids, destination_id, primary_file_id):
-    # Move source scenes' files into destination, set the edited file primary,
-    # delete the (now-empty) source scenes. Reassigns files; does NOT delete from disk.
-    # NOTE: values is a SceneUpdateInput, whose `id` field is required (ID!) — omitting
-    # it makes the whole request fail GraphQL validation with HTTP 422.
+def scene_merge_mutation(source_ids, destination_id):
+    # Move source scenes' files into destination and delete the (now-empty) source
+    # scenes. Reassigns files; does NOT delete from disk. We intentionally pass NO
+    # `values`: scene.Merge discards a requested primary when the destination already
+    # has one (merge.go) — so primary is set separately via sceneUpdate afterward.
     q = """mutation SceneMerge($input: SceneMergeInput!) {
       sceneMerge(input: $input) { id }
     }"""
-    return q, {"input": {"source": source_ids, "destination": destination_id,
-                         "values": {"id": destination_id, "primary_file_id": primary_file_id}}}
+    return q, {"input": {"source": source_ids, "destination": destination_id}}
 
 def generate_scene_mutation(scene_id):
+    # overwrite=True so the new primary file's sprites/previews/phash replace the
+    # original's (otherwise generate skips — assets already exist for the scene).
     q = """mutation Generate($input: GenerateMetadataInput!) {
       metadataGenerate(input: $input)
     }"""
-    return q, {"input": {"sceneIDs": [scene_id], "sprites": True,
-                         "previews": True, "phashes": True}}
+    return q, {"input": {"sceneIDs": [scene_id], "sprites": True, "previews": True,
+                         "covers": True, "phashes": True, "overwrite": True}}

@@ -8,8 +8,8 @@ import urllib.request
 from ffmpeg_args import mirror_encode_args, build_vf, build_command
 from stash_ops import (find_scene_query, get_configuration_query,
                        metadata_scan_mutation, find_file_id_query,
-                       scene_merge_mutation, generate_scene_mutation,
-                       find_edited_scenes_query)
+                       scene_merge_mutation, set_primary_mutation,
+                       generate_scene_mutation, find_edited_scenes_query)
 
 EDITED_SUFFIX = ".edited"
 
@@ -99,46 +99,63 @@ def crop_reencode(gql, args):
 # Runs inside the scan job, so it never waits on a queued job. sceneMerge is a
 # synchronous mutation (not a job), so there is no deadlock.
 def _merge_one(gql, scene):
-    """scene: {id, files:[{id,path}]}. Merge this edited scene into its source
-    scene (edited file becomes primary). Returns True on a successful merge."""
-    new_scene_id = str(scene["id"])
+    """scene: {id, files:[{id,path}]}. Ensure the edited file ends up as PRIMARY
+    of the source scene, then regenerate. Idempotent/self-healing — handles both
+    a fresh orphan (edited file is alone in a new scene → merge into source) and an
+    already-merged scene (edited file is a secondary → just promote to primary).
+    Returns True on success."""
+    sid = str(scene["id"])
     files = scene.get("files") or []
-    if not files:
-        return False
-    edited_path, edited_file_id = files[0]["path"], files[0]["id"]
+    edited = next((f for f in files if derive_source_path(f["path"])), None)
+    if not edited:
+        return False  # no *.edited.* file in this scene — ignore
+    edited_file_id = edited["id"]
+    source_path = derive_source_path(edited["path"])
 
-    source_path = derive_source_path(edited_path)
-    if not source_path:
-        return False  # not one of our *.edited.* files — ignore
+    # Is the source (un-edited) file already in THIS scene? Then it's already merged.
+    already_merged = any(
+        os.path.normpath(f["path"]) == os.path.normpath(source_path) for f in files
+    )
 
-    _log("i", "[SVE] edited scene %s file=%s; resolving source %s"
-         % (new_scene_id, edited_file_id, source_path))
-    matches = gql.call(*find_file_id_query(source_path))["findScenes"]["scenes"]
-    source_scene_id = None
-    for s in matches:
-        for sf in s["files"]:
-            if os.path.normpath(sf["path"]) == os.path.normpath(source_path):
-                source_scene_id = str(s["id"])
+    if already_merged:
+        target = sid
+        _log("i", "[SVE] scene %s already has edited+source; promoting file=%s to primary"
+             % (sid, edited_file_id))
+    else:
+        # Orphan: find the separate source scene and merge this one into it.
+        matches = gql.call(*find_file_id_query(source_path))["findScenes"]["scenes"]
+        target = None
+        for s in matches:
+            for sf in s["files"]:
+                if os.path.normpath(sf["path"]) == os.path.normpath(source_path):
+                    target = str(s["id"])
+                    break
+            if target:
                 break
-        if source_scene_id:
-            break
-    if not source_scene_id or source_scene_id == new_scene_id:
-        _log("e", "[SVE] no source scene for %s — leaving new scene as-is" % source_path)
+        if not target or target == sid:
+            _log("e", "[SVE] no source scene for %s — leaving new scene as-is" % source_path)
+            return False
+        try:
+            r = gql.call(*scene_merge_mutation([sid], target))
+            _log("i", "[SVE] sceneMerge new=%s -> source=%s -> %s" % (sid, target, r))
+        except Exception as e:
+            _log("e", "[SVE] sceneMerge FAILED (new=%s source=%s): %s" % (sid, target, e))
+            return False
+
+    # Promote to primary separately — merge discards a requested primary when the
+    # destination already has one (merge.go); the edited file is now associated.
+    try:
+        r = gql.call(*set_primary_mutation(target, edited_file_id))
+        _log("i", "[SVE] set primary file=%s on scene %s -> %s" % (edited_file_id, target, r))
+    except Exception as e:
+        _log("e", "[SVE] set primary FAILED (scene=%s file=%s): %s" % (target, edited_file_id, e))
         return False
 
     try:
-        r = gql.call(*scene_merge_mutation([new_scene_id], source_scene_id, edited_file_id))
-        _log("i", "[SVE] sceneMerge new=%s -> source=%s (primary=%s) -> %s"
-             % (new_scene_id, source_scene_id, edited_file_id, r))
+        gql.call(*generate_scene_mutation(target))
+        _log("i", "[SVE] queued generate (overwrite) for scene %s" % target)
     except Exception as e:
-        _log("e", "[SVE] sceneMerge FAILED (new=%s source=%s): %s" % (new_scene_id, source_scene_id, e))
-        return False
-
-    try:
-        gql.call(*generate_scene_mutation(source_scene_id))
-        _log("i", "[SVE] queued generate for scene %s" % source_scene_id)
-    except Exception as e:
-        _log("e", "[SVE] generate FAILED (scene=%s): %s" % (source_scene_id, e))
+        _log("e", "[SVE] generate FAILED (scene=%s): %s" % (target, e))
     return True
 
 

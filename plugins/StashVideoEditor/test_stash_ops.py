@@ -39,12 +39,16 @@ def test_find_file_id_query_passes_path():
     assert "findScenes" in q or "findScene" in q
     assert v["path"] == "/lib/a.mp4"
 
-def test_scene_merge_mutation_includes_required_values_id():
-    q, v = scene_merge_mutation(["18874"], "19000", "85256")
+def test_scene_merge_mutation_no_values():
+    # No `values`: merge discards a requested primary when dest already has one;
+    # primary is set via a separate sceneUpdate afterward.
+    q, v = scene_merge_mutation(["18874"], "19000")
     assert "sceneMerge" in q
-    # values.id is required (SceneUpdateInput.id: ID!) — omitting it = HTTP 422
-    assert v == {"input": {"source": ["18874"], "destination": "19000",
-                           "values": {"id": "19000", "primary_file_id": "85256"}}}
+    assert v == {"input": {"source": ["18874"], "destination": "19000"}}
+
+def test_generate_includes_overwrite():
+    q, v = generate_scene_mutation("12")
+    assert v["input"]["overwrite"] is True
 
 def test_find_edited_scenes_query():
     q, v = find_edited_scenes_query()
