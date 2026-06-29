@@ -1,0 +1,21 @@
+# StashVideoEditor.yml
+name: Stash Video Editor
+description: Visually crop and stretch a scene's video, re-encode with Stash's own settings, and swap it in as the primary file (non-destructive).
+version: 0.1.0
+ui:
+  requires:
+    - CommunityScriptsUILibrary
+  javascript:
+    - cropMath.js
+    - videoEditor.js
+  css:
+    - videoEditor.css
+exec:
+  - python
+  - "{pluginDir}/video_editor.py"
+interface: raw
+tasks:
+  - name: Crop and re-encode
+    description: Crop/stretch + re-encode a scene's video and set the result as primary file
+    defaultArgs:
+      mode: crop_reencode
