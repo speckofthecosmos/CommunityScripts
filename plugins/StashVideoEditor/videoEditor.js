@@ -52,7 +52,7 @@
 
   async function runCropTask(sceneId, crop, outW, outH) {
     const query = `mutation Run($args: Map!) {
-      runPluginTask(plugin_id: "StashVideoEditor", task_name: "Crop and re-encode", args: $args)
+      runPluginTask(plugin_id: "StashVideoEditor", task_name: "Crop and re-encode", args_map: $args)
     }`;
     const args = { mode: "crop_reencode", scene_id: sceneId,
                    crop, out_w: outW, out_h: outH };
