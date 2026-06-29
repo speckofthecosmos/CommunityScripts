@@ -2,9 +2,8 @@
   "use strict";
   const PluginApi = window.PluginApi;
   if (!PluginApi) { console.warn("[StashVideoEditor] PluginApi not ready"); return; }
-  console.log("[StashVideoEditor] loaded");
 
-  const React = PluginApi.React;
+  const React = PluginApi.React; // core API — safe at load time
   const { useState, useRef, useCallback, useEffect } = React;
 
   function CropOverlay(props) {
@@ -47,10 +46,8 @@
     }, React.createElement("div", { className: "sve-crop-handle", onMouseDown: onDown("resize") }));
   }
 
-  const { Modal, Button } = PluginApi.libraries.Bootstrap;
-  const csLib = window.csLib;
-
   async function runCropTask(sceneId, crop, outW, outH) {
+    const csLib = window.csLib; // lazy: loaded by CommunityScriptsUILibrary, not ready at script load
     const query = `mutation Run($args: Map!) {
       runPluginTask(plugin_id: "StashVideoEditor", task_name: "Crop and re-encode", args_map: $args)
     }`;
@@ -61,6 +58,7 @@
 
   function EditorModal(props) {
     // props: { sceneId, show, onHide }
+    const { Modal, Button } = PluginApi.libraries.Bootstrap; // lazy: ready at render, not at load
     const [crop, setCrop] = useState(null);
     const [outW, setOutW] = useState("");
     const [outH, setOutH] = useState("");
@@ -107,6 +105,7 @@
   }
 
   function CropTabButton(props) {
+    const { Button } = PluginApi.libraries.Bootstrap; // lazy
     const [show, setShow] = useState(false);
     return React.createElement(React.Fragment, null,
       React.createElement(Button, { variant: "secondary", className: "sve-open-btn", onClick: () => setShow(true) }, "Crop & re-encode"),
@@ -114,11 +113,17 @@
     );
   }
 
-  PluginApi.patch.before("ScenePage.TabContent", function (props) {
-    const sceneId = props.scene && props.scene.id;
-    if (!sceneId) return [{ children: props.children }];
-    const children = Array.isArray(props.children) ? props.children.slice() : [props.children];
-    children.push(React.createElement(CropTabButton, { key: "sve-btn", sceneId }));
-    return [{ children: React.createElement(React.Fragment, null, ...children) }];
-  });
+  // Guard registration so a plugin error can never block Stash's UI bootstrap.
+  try {
+    PluginApi.patch.before("ScenePage.TabContent", function (props) {
+      const sceneId = props.scene && props.scene.id;
+      if (!sceneId) return [{ children: props.children }];
+      const children = Array.isArray(props.children) ? props.children.slice() : [props.children];
+      children.push(React.createElement(CropTabButton, { key: "sve-btn", sceneId }));
+      return [{ children: React.createElement(React.Fragment, null, ...children) }];
+    });
+    console.log("[StashVideoEditor] loaded");
+  } catch (e) {
+    console.error("[StashVideoEditor] registration failed (UI unaffected)", e);
+  }
 })();
