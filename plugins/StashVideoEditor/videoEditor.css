@@ -1,13 +1,37 @@
-.sve-stage { position: relative; }
+.sve-stage { position: relative; overflow: hidden; background: #000; }
+
 .sve-crop-box {
   position: absolute; border: 2px solid #4caf50;
   box-shadow: 0 0 0 9999px rgba(0,0,0,0.45); cursor: move; box-sizing: border-box;
 }
-.sve-crop-handle {
-  position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px;
-  background: #4caf50; cursor: nwse-resize; border-radius: 2px;
+/* Stretch mode: the box is the output frame over a clipped region — no spotlight dimming. */
+.sve-crop-box.sve-frame {
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.6); border-color: #2196f3;
 }
+
+/* Clipping wrapper that shows only the cropped region in stretch mode. */
+.sve-frame-clip { position: absolute; overflow: hidden; }
+
+/* 8 resize handles. 14px squares centered on the box edges (offset -7px). */
+.sve-handle {
+  position: absolute; width: 14px; height: 14px;
+  background: #4caf50; border: 1px solid #fff; border-radius: 2px; box-sizing: border-box;
+}
+.sve-frame .sve-handle { background: #2196f3; }
+.sve-handle-nw { left: -7px;  top: -7px;    cursor: nwse-resize; }
+.sve-handle-n  { left: 50%;   top: -7px;    transform: translateX(-50%); cursor: ns-resize; }
+.sve-handle-ne { right: -7px; top: -7px;    cursor: nesw-resize; }
+.sve-handle-e  { right: -7px; top: 50%;     transform: translateY(-50%); cursor: ew-resize; }
+.sve-handle-se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.sve-handle-s  { left: 50%;   bottom: -7px; transform: translateX(-50%); cursor: ns-resize; }
+.sve-handle-sw { left: -7px;  bottom: -7px; cursor: nesw-resize; }
+.sve-handle-w  { left: -7px;  top: 50%;     transform: translateY(-50%); cursor: ew-resize; }
+
+.sve-modebar { margin-top: 12px; }
+.sve-mode-btn { font-weight: 600; }
+
 .sve-controls { margin-top: 12px; }
 .sve-controls input { width: 6em; margin: 0 .4em; }
+.sve-outdims { font-weight: 600; }
 .sve-hint { font-size: .85em; color: var(--gray-11, #888); margin-top: .4em; }
 .sve-open-btn { margin-top: 10px; }
