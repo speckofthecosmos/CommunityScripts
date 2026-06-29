@@ -112,15 +112,32 @@
       }
     }
 
-    // First/last index whose energy clears k * peak; fall back to full span if flat.
+    // Longest CONTIGUOUS run of indices clearing k * peak (fall back to full span if
+    // flat). Longest-run, not first-to-last, so a sharp logo/watermark island out in the
+    // blurred margin doesn't stretch the box across the blur to swallow it. A small gap
+    // tolerance bridges internal low-detail patches within real content without merging a
+    // far-off island (the blur between content and logo is much wider than the bridge).
     function span(energy, n) {
       let peak = 0;
       for (let i = 0; i < n; i++) if (energy[i] > peak) peak = energy[i];
       if (peak <= 0) return { lo: 0, hi: n - 1 };
       const t = k * peak;
-      let lo = 0; while (lo < n && energy[lo] < t) lo++;
-      let hi = n - 1; while (hi > lo && energy[hi] < t) hi--;
-      return { lo: lo, hi: hi };
+      const gap = Math.max(1, Math.round(0.04 * n));
+      let bestLo = 0, bestHi = -1, bestLen = 0;
+      let runLo = -1, gapRun = 0;
+      for (let i = 0; i < n; i++) {
+        if (energy[i] >= t) {
+          if (runLo < 0) runLo = i;
+          gapRun = 0;
+          const len = i - runLo + 1;
+          if (len > bestLen) { bestLen = len; bestLo = runLo; bestHi = i; }
+        } else if (runLo >= 0) {
+          gapRun++;
+          if (gapRun > gap) { runLo = -1; gapRun = 0; } // gap too wide → end the run
+        }
+      }
+      if (bestHi < 0) return { lo: 0, hi: n - 1 };
+      return { lo: bestLo, hi: bestHi };
     }
     const ys = span(rowE, h);
     const xs = span(colE, w);

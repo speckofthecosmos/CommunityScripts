@@ -165,3 +165,13 @@ test("detectSharpContentBox: flat/low-detail frame → full frame (safe no-op)",
   const data = grayFrame(8, 8, () => BAR);
   assert.deepStrictEqual(detectSharpContentBox(data, 8, 8), { x: 0, y: 0, w: 8, h: 8 });
 });
+
+test("detectSharpContentBox: ignores a sharp logo island separated from the content by blur", () => {
+  // content = cols 0..3 (full height); watermark = a small sharp island at cols 9..10,
+  // rows 5..6, out in the blurred margin. Longest-run picks the content, not the span
+  // that would stretch across the blur to swallow the logo.
+  const content = (x) => x <= 3;
+  const logo = (x, y) => x >= 9 && x <= 10 && y >= 5 && y <= 6;
+  const data = grayFrame(12, 8, (x, y) => (content(x) || logo(x, y)) ? checker(x, y) : BAR);
+  assert.deepStrictEqual(detectSharpContentBox(data, 12, 8), { x: 0, y: 0, w: 4, h: 8 });
+});
