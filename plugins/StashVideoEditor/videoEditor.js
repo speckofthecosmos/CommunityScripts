@@ -5,7 +5,7 @@
   console.log("[StashVideoEditor] loaded");
 
   const React = PluginApi.React;
-  const { useState, useRef, useCallback } = React;
+  const { useState, useRef, useCallback, useEffect } = React;
 
   function CropOverlay(props) {
     // props: { containerSize:{w,h}, natural:{w,h}, onCropChange }
@@ -17,6 +17,7 @@
     const emit = useCallback((b) => {
       props.onCropChange(cm.rectToSourceCrop(b, rendered, props.natural));
     }, [rendered, props]);
+    useEffect(() => { emit(box); }, []); // surface default full-frame crop so submit is enabled
 
     const onDown = (mode) => (e) => {
       e.preventDefault();
@@ -74,8 +75,13 @@
     const submit = async () => {
       const w = parseInt(outW, 10) || crop.width;
       const h = parseInt(outH, 10) || crop.height;
-      await runCropTask(props.sceneId, crop, w, h);
-      props.onHide();
+      try {
+        await runCropTask(props.sceneId, crop, w, h);
+      } catch (e) {
+        console.error("[StashVideoEditor] crop task failed", e);
+      } finally {
+        props.onHide();
+      }
     };
 
     return React.createElement(Modal, { show: props.show, onHide: props.onHide, size: "lg" },
@@ -104,7 +110,7 @@
     const [show, setShow] = useState(false);
     return React.createElement(React.Fragment, null,
       React.createElement(Button, { variant: "secondary", className: "sve-open-btn", onClick: () => setShow(true) }, "Crop & re-encode"),
-      React.createElement(EditorModal, { sceneId: props.sceneId, show, onHide: () => setShow(false) })
+      show && React.createElement(EditorModal, { sceneId: props.sceneId, show: true, onHide: () => setShow(false) })
     );
   }
 
