@@ -20,6 +20,7 @@
 
     const onDown = (mode) => (e) => {
       e.preventDefault();
+      e.stopPropagation();
       drag.current = { mode, sx: e.clientX, sy: e.clientY, start: box };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
