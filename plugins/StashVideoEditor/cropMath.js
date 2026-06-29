@@ -6,14 +6,7 @@
 
   function evenRound(n) {
     if (!isFinite(n) || n < 0) return 0;
-    const half = n / 2;
-    const floor = Math.floor(half);
-    const ceil = Math.ceil(half);
-    // Banker's rounding: if equidistant, round to even
-    if (Math.abs(half - floor) === Math.abs(ceil - half)) {
-      return 2 * (floor % 2 === 0 ? floor : ceil);
-    }
-    return 2 * Math.round(half);
+    return 2 * Math.floor(n / 2); // round DOWN to even — never exceeds source bounds
   }
 
   // object-fit: contain — scale media to fit container, preserving aspect, centered.

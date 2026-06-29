@@ -3,9 +3,9 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { evenRound, getRenderedVideoRect, rectToSourceCrop } = require("./cropMath.js");
 
-test("evenRound rounds to nearest even, floors at 0", () => {
+test("evenRound rounds down to even, floors at 0", () => {
   assert.strictEqual(evenRound(101), 100);
-  assert.strictEqual(evenRound(103), 104);
+  assert.strictEqual(evenRound(103), 102);
   assert.strictEqual(evenRound(-5), 0);
 });
 
