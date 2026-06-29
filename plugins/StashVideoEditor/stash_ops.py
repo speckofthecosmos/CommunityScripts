@@ -41,6 +41,15 @@ def set_primary_mutation(scene_id, file_id):
     }"""
     return q, {"input": {"id": scene_id, "primary_file_id": file_id}}
 
+def scene_merge_mutation(source_ids, destination_id, primary_file_id):
+    # Move source scenes' files into destination, set the edited file primary,
+    # delete the (now-empty) source scenes. Reassigns files; does NOT delete from disk.
+    q = """mutation SceneMerge($input: SceneMergeInput!) {
+      sceneMerge(input: $input) { id }
+    }"""
+    return q, {"input": {"source": source_ids, "destination": destination_id,
+                         "values": {"primary_file_id": primary_file_id}}}
+
 def generate_scene_mutation(scene_id):
     q = """mutation Generate($input: GenerateMetadataInput!) {
       metadataGenerate(input: $input)

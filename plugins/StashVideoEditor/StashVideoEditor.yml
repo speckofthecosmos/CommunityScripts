@@ -19,3 +19,8 @@ tasks:
     description: Crop/stretch + re-encode a scene's video and set the result as primary file
     defaultArgs:
       mode: crop_reencode
+hooks:
+  - name: Merge edited file into source scene
+    description: When a scan creates a *.edited scene, merge it into the source scene as primary (finishes the crop task; avoids the serial-job-queue deadlock).
+    triggeredBy:
+      - Scene.Create.Post
