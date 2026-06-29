@@ -57,8 +57,9 @@
     const drag = useRef(null);
     const videoRef = useRef(null);
     const timeRef = useRef(0);                        // preserve playhead across mode remounts
-    const frozen = useRef(null);                      // {crop, baseFrame} captured on entering stretch
+    const frozen = useRef(null);                      // {crop, baseFrame, cropBox} captured on entering stretch
     const naturalRef = useRef(null);
+    const inited = useRef(false);                     // init the box exactly once (survives video remounts)
 
     const streamUrl = `/scene/${props.sceneId}/stream`;
     const rendered = natural ? cm.getRenderedVideoRect(natural, CONTAINER) : null;
@@ -76,8 +77,13 @@
     const onMeta = (e) => {
       const v = e.target;
       const nat = { w: v.videoWidth, h: v.videoHeight };
-      naturalRef.current = nat;
-      setNatural(nat);
+      // The <video> remounts when toggling Crop/Stretch and re-fires this. Only push a
+      // new `natural` when the dims actually change, so the init effect isn't handed a
+      // fresh object ref that would reset the box mid-edit.
+      if (!naturalRef.current || naturalRef.current.w !== nat.w || naturalRef.current.h !== nat.h) {
+        naturalRef.current = nat;
+        setNatural(nat);
+      }
       setDuration(v.duration || 0);
     };
 
@@ -97,9 +103,12 @@
       setCurTime(t);
     };
 
-    // Initialize the box to the full rendered frame once the video's natural size is known.
+    // Initialize the box to the full rendered frame ONCE the video's natural size is
+    // known. The `inited` guard keeps a video remount (mode toggle) from re-running this
+    // and wiping the user's crop/stretch edits.
     useEffect(() => {
-      if (!natural) return;
+      if (!natural || inited.current) return;
+      inited.current = true;
       const rnd = cm.getRenderedVideoRect(natural, CONTAINER);
       const initial = { x: rnd.x, y: rnd.y, w: rnd.w, h: rnd.h };
       setBox(initial);
@@ -163,13 +172,19 @@
       setPlaying(false); // the <video> remounts across modes; resync transport state
       if (mode === "crop") {
         const fc = cm.rectToSourceCrop(box, rendered, natural);
-        frozen.current = { crop: fc, baseFrame: { w: box.w, h: box.h } };
+        const cropBox = { x: box.x, y: box.y, w: box.w, h: box.h };
+        // baseFrame == cropBox ⇒ stretch starts UNDISTORTED at the crop's own aspect.
+        frozen.current = { crop: fc, baseFrame: { w: box.w, h: box.h }, cropBox: cropBox };
         setCrop(fc);
         setOutDims(cm.stretchOutputDims(fc, { w: box.w, h: box.h }, { w: box.w, h: box.h }));
         setMode("stretch");
       } else {
+        // Restore the crop box exactly as it was before stretching — don't treat the
+        // dragged output frame as a new crop.
+        const cb = frozen.current ? frozen.current.cropBox : box;
+        setBox(cb);
+        commit(cb, "crop", rendered);
         setMode("crop");
-        commit(box, "crop", rendered);
       }
     };
 
