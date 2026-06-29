@@ -5,7 +5,8 @@ import subprocess
 import sys
 import urllib.request
 
-from ffmpeg_args import mirror_encode_args, build_vf, build_command
+from ffmpeg_args import (mirror_encode_args, build_vf, build_command,
+                         build_trim_command)
 from stash_ops import (find_scene_query, get_configuration_query,
                        metadata_scan_mutation, find_file_id_query,
                        scene_merge_mutation, set_primary_mutation,
@@ -89,6 +90,58 @@ def crop_reencode(gql, args):
         return
     os.replace(tmp, dst)  # finalize new file; source is never touched
     _log("i", "[SVE] encoded -> %s" % dst)
+
+    scan_data = gql.call(*metadata_scan_mutation(dst))
+    _log("i", "[SVE] queued scan job=%s; merge runs via Scene.Create.Post hook"
+         % scan_data.get("metadataScan"))
+
+
+# ── Phase 1b: task (UI-triggered) — lossless/precision TRIM, same swap flow ───
+# A trim is a distinct, crop-mutually-exclusive operation. Lossless = stream-copy
+# (-c copy, instant, the cut snaps to the nearest keyframe so the output always
+# CONTAINS the chosen range). Precision = re-encode for a frame-accurate cut.
+# Either way we emit the SAME .edited file and queue the SAME scan, so the
+# Scene.Create.Post merge hook below finishes the swap unchanged.
+def trim(gql, args):
+    scene_id = str(args["scene_id"])
+    start, end = float(args["start"]), float(args["end"])
+    mode = args.get("mode")
+    if mode == "lossless_trim":
+        lossless = True
+    elif mode == "precision_trim":
+        lossless = False
+    else:
+        lossless = bool(args.get("lossless", True))
+
+    scene = gql.call(*find_scene_query(scene_id))["findScene"]
+    if not scene or not scene.get("files"):
+        _log("e", "[SVE] scene %s has no files" % scene_id)
+        return
+    src = scene["files"][0]["path"]
+    dst = derive_output_path(src)
+    tmp = dst + ".sve-partial" + os.path.splitext(dst)[1]
+
+    # ffmpeg path comes from Stash config either way; precision also mirrors the
+    # configured transcode args, lossless ignores them (-c copy needs no encoder).
+    cfg = gql.call(*get_configuration_query())["configuration"]["general"]
+    enc = mirror_encode_args(cfg)
+    if lossless:
+        cmd = build_trim_command(enc["ffmpeg"], src, tmp, start, end, lossless=True)
+    else:
+        cmd = build_trim_command(enc["ffmpeg"], src, tmp, start, end, lossless=False,
+                                 input_args=enc["input_args"], output_args=enc["output_args"])
+
+    _log("i", "[SVE] trimming (%s) %.3f-%.3f: %s"
+         % ("lossless" if lossless else "precision", start, end, " ".join(cmd)))
+    result = subprocess.run(cmd, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        _log("e", "[SVE] ffmpeg failed (%s): %s"
+             % (result.returncode, result.stderr.decode(errors="replace")))
+        return
+    os.replace(tmp, dst)  # finalize new file; source is never touched
+    _log("i", "[SVE] trimmed -> %s" % dst)
 
     scan_data = gql.call(*metadata_scan_mutation(dst))
     _log("i", "[SVE] queued scan job=%s; merge runs via Scene.Create.Post hook"
@@ -181,6 +234,8 @@ def main():
     args = data.get("args", {})
     if args.get("mode") == "crop_reencode":
         crop_reencode(gql, args)
+    elif args.get("mode") in ("trim", "lossless_trim", "precision_trim"):
+        trim(gql, args)
     elif args.get("mode") == "merge":
         merge_all(gql)
     elif "hookContext" in args:

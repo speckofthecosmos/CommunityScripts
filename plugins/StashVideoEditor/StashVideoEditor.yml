@@ -1,12 +1,14 @@
 # StashVideoEditor.yml
 name: Stash Video Editor
-description: Visually crop and stretch a scene's video, re-encode with Stash's own settings, and swap it in as the primary file (non-destructive).
-version: 0.1.0
+description: Visually crop, stretch, or trim a scene's video and swap the result in as the primary file (non-destructive). Crop/stretch re-encode with Stash's own settings; trim is lossless (stream-copy) or precision (re-encode).
+version: 0.2.0
 ui:
   requires:
     - CommunityScriptsUILibrary
   javascript:
     - cropMath.js
+    - timeMath.js
+    - spriteVtt.js
     - videoEditor.js
   css:
     - videoEditor.css
@@ -19,6 +21,10 @@ tasks:
     description: Crop/stretch + re-encode a scene's video and set the result as primary file
     defaultArgs:
       mode: crop_reencode
+  - name: Trim
+    description: Trim a scene to one in/out range (lossless stream-copy or precision re-encode) and set the result as primary file
+    defaultArgs:
+      mode: trim
   - name: Merge edited scenes
     description: Fallback/cleanup — merge any orphan *.edited scenes into their source scenes (normally automatic via the hook)
     defaultArgs:
