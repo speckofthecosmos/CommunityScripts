@@ -7,3 +7,7 @@
   position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px;
   background: #4caf50; cursor: nwse-resize; border-radius: 2px;
 }
+.sve-controls { margin-top: 12px; }
+.sve-controls input { width: 6em; margin: 0 .4em; }
+.sve-hint { font-size: .85em; color: var(--gray-11, #888); margin-top: .4em; }
+.sve-open-btn { margin-top: 10px; }
