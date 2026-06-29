@@ -6,6 +6,7 @@ import subprocess
 import sys
 import urllib.request
 
+import offload
 from ffmpeg_args import (mirror_encode_args, build_vf, build_command,
                          build_trim_command)
 from stash_ops import (find_scene_query, get_configuration_query,
@@ -105,6 +106,29 @@ def remap_markers(markers, start, new_duration, eps=0.05):
     return actions
 
 
+def _run_local_encode(cmd, tmp, dst):
+    """Run ffmpeg locally (in the Stash container) → atomic replace. Raises on failure."""
+    _log("i", "[SVE] encoding locally: %s" % " ".join(cmd))
+    result = subprocess.run(cmd, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise RuntimeError("ffmpeg failed (%s): %s"
+                           % (result.returncode, result.stderr.decode(errors="replace")))
+    os.replace(tmp, dst)  # finalize new file; source is never touched
+
+
+def _encode(spec, cmd, tmp, dst):
+    """Best-effort: encode on the Mac HW service (path-mode) when configured/reachable,
+    else local ffmpeg. On offload success the Mac wrote `dst` over the shared NFS mount.
+    Returns 'offload' or 'local'."""
+    url, token = offload.offload_config()
+    return offload.choose_and_encode(
+        spec, url=url, token=token,
+        health=offload.http_health, post=offload.http_post,
+        local=lambda: _run_local_encode(cmd, tmp, dst))
+
+
 # ── Phase 1: task (UI-triggered) — encode, queue a scan, EXIT ────────────────
 # We cannot wait for the scan: Stash's job queue is serial, so the scan cannot
 # run until this task exits. The Scene.Create.Post hook finishes the merge once
@@ -127,15 +151,14 @@ def crop_reencode(gql, args):
     vf = build_vf(crop, out_w, out_h)
     cmd = build_command(enc["ffmpeg"], src, tmp, vf, enc["input_args"], enc["output_args"])
 
-    _log("i", "[SVE] encoding: %s" % " ".join(cmd))
-    result = subprocess.run(cmd, stderr=subprocess.PIPE)
-    if result.returncode != 0:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        _log("e", "[SVE] ffmpeg failed (%s): %s" % (result.returncode, result.stderr.decode(errors="replace")))
+    spec = offload.build_crop_spec(src, dst, crop, out_w, out_h,
+                                   {"output_args": enc["output_args"]})
+    try:
+        where = _encode(spec, cmd, tmp, dst)
+    except Exception as e:
+        _log("e", "[SVE] %s" % e)
         return
-    os.replace(tmp, dst)  # finalize new file; source is never touched
-    _log("i", "[SVE] encoded -> %s" % dst)
+    _log("i", "[SVE] cropped via %s -> %s" % (where, dst))
 
     scan_data = gql.call(*metadata_scan_mutation(dst))
     _log("i", "[SVE] queued scan job=%s; merge runs via Scene.Create.Post hook"
@@ -171,23 +194,23 @@ def trim(gql, args):
     # configured transcode args, lossless ignores them (-c copy needs no encoder).
     cfg = gql.call(*get_configuration_query())["configuration"]["general"]
     enc = mirror_encode_args(cfg)
-    if lossless:
-        cmd = build_trim_command(enc["ffmpeg"], src, tmp, start, end, lossless=True)
-    else:
-        cmd = build_trim_command(enc["ffmpeg"], src, tmp, start, end, lossless=False,
-                                 input_args=enc["input_args"], output_args=enc["output_args"])
-
-    _log("i", "[SVE] trimming (%s) %.3f-%.3f: %s"
-         % ("lossless" if lossless else "precision", start, end, " ".join(cmd)))
-    result = subprocess.run(cmd, stderr=subprocess.PIPE)
-    if result.returncode != 0:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        _log("e", "[SVE] ffmpeg failed (%s): %s"
-             % (result.returncode, result.stderr.decode(errors="replace")))
+    try:
+        if lossless:
+            # Lossless (-c copy) is instant and never offloaded — run it locally.
+            cmd = build_trim_command(enc["ffmpeg"], src, tmp, start, end, lossless=True)
+            _run_local_encode(cmd, tmp, dst)
+            where = "local"
+        else:
+            cmd = build_trim_command(enc["ffmpeg"], src, tmp, start, end, lossless=False,
+                                     input_args=enc["input_args"], output_args=enc["output_args"])
+            spec = offload.build_trim_spec(src, dst, start, end,
+                                           {"output_args": enc["output_args"]})
+            where = _encode(spec, cmd, tmp, dst)
+    except Exception as e:
+        _log("e", "[SVE] %s" % e)
         return
-    os.replace(tmp, dst)  # finalize new file; source is never touched
-    _log("i", "[SVE] trimmed -> %s" % dst)
+    _log("i", "[SVE] trimmed (%s) via %s -> %s"
+         % ("lossless" if lossless else "precision", where, dst))
 
     scan_data = gql.call(*metadata_scan_mutation(dst))
     _log("i", "[SVE] queued scan job=%s; merge runs via Scene.Create.Post hook"
