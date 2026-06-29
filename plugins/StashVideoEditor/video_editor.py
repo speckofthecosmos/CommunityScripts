@@ -95,10 +95,29 @@ def crop_reencode(gql, args):
         _log("e", "[SVE] new file not indexed after scan: %s" % dst)
         return
 
-    for builder in (assign_file_mutation, set_primary_mutation):
-        gql.call(*builder(scene_id, new_file_id))
-    gql.call(*generate_scene_mutation(scene_id))
-    _log("i", "[SVE] done: scene %s primary swapped to file %s" % (scene_id, new_file_id))
+    _log("i", "[SVE] merging new file id=%s into scene %s as primary" % (new_file_id, scene_id))
+
+    try:
+        r = gql.call(*assign_file_mutation(scene_id, new_file_id))
+        _log("i", "[SVE] sceneAssignFile -> %s" % r)
+    except Exception as e:
+        _log("e", "[SVE] sceneAssignFile FAILED (scene=%s file=%s): %s" % (scene_id, new_file_id, e))
+        return
+
+    try:
+        r = gql.call(*set_primary_mutation(scene_id, new_file_id))
+        _log("i", "[SVE] sceneUpdate(primary_file_id) -> %s" % r)
+    except Exception as e:
+        _log("e", "[SVE] sceneUpdate(primary_file_id) FAILED (scene=%s file=%s): %s" % (scene_id, new_file_id, e))
+        return
+
+    try:
+        gql.call(*generate_scene_mutation(scene_id))
+        _log("i", "[SVE] metadataGenerate triggered for scene %s" % scene_id)
+    except Exception as e:
+        _log("e", "[SVE] metadataGenerate FAILED (scene=%s): %s" % (scene_id, e))
+
+    _log("i", "[SVE] done: scene %s primary=%s" % (scene_id, new_file_id))
 
 
 def main():
