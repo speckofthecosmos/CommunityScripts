@@ -1,6 +1,7 @@
 # video_editor.py
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -10,9 +11,12 @@ from ffmpeg_args import (mirror_encode_args, build_vf, build_command,
 from stash_ops import (find_scene_query, get_configuration_query,
                        metadata_scan_mutation, find_file_id_query,
                        scene_merge_mutation, set_primary_mutation,
-                       generate_scene_mutation, find_edited_scenes_query)
+                       generate_scene_mutation, find_edited_scenes_query,
+                       scene_markers_query, marker_update_mutation,
+                       marker_destroy_mutation)
 
 EDITED_SUFFIX = ".edited"
+TRIM_RE = re.compile(r"\.trim_(\d+)$")  # in-point (ms) encoded for the merge hook
 
 
 def _log(level, msg):
@@ -45,18 +49,60 @@ class StashGQL:
         return payload["data"]
 
 
-def derive_output_path(src):
+def derive_output_path(src, start=None):
+    """Edited-file path. Crop: `<root>.edited<ext>`. Trim: `<root>.trim_<ms>.edited
+    <ext>` — the in-point (ms, dot-free so splitext is unaffected) so the merge hook
+    can remap marker times. Both keep the literal ".edited." the orphan search needs."""
     root, ext = os.path.splitext(src)
-    return root + EDITED_SUFFIX + (ext if ext else ".mp4")
+    ext = ext if ext else ".mp4"
+    marker = EDITED_SUFFIX
+    if start is not None:
+        marker = ".trim_%d" % int(round(float(start) * 1000)) + EDITED_SUFFIX
+    return root + marker + ext
 
 
 def derive_source_path(edited):
-    """Inverse of derive_output_path: strip the .edited marker. Returns None if
-    the path is not one of ours (so the hook ignores unrelated scenes)."""
+    """Inverse of derive_output_path: strip the .edited (and optional .trim_<ms>)
+    marker back to the real source file. Returns None if the path is not one of ours
+    (so the hook ignores unrelated scenes)."""
     root, ext = os.path.splitext(edited)
     if not root.endswith(EDITED_SUFFIX):
         return None
-    return root[:-len(EDITED_SUFFIX)] + ext
+    base = TRIM_RE.sub("", root[:-len(EDITED_SUFFIX)])
+    return base + ext
+
+
+def derive_trim_offset(edited):
+    """Trim in-point (seconds) encoded in an edited path, or 0.0 for crop/non-ours."""
+    root, ext = os.path.splitext(edited)
+    if not root.endswith(EDITED_SUFFIX):
+        return 0.0
+    m = TRIM_RE.search(root[:-len(EDITED_SUFFIX)])
+    return (int(m.group(1)) / 1000.0) if m else 0.0
+
+
+def remap_markers(markers, start, new_duration, eps=0.05):
+    """Shift scene markers onto a trimmed timeline. Each marker moves earlier by
+    `start`; markers whose moment falls outside the kept [0, new_duration] range are
+    dropped (their footage is gone). Returns a list of {action: update|delete, ...}.
+    new_duration None ⇒ no upper bound (cull only the front)."""
+    upper = float("inf") if new_duration is None else new_duration
+    actions = []
+    for m in markers:
+        sec = m.get("seconds")
+        if sec is None:
+            continue
+        ns = sec - start
+        if ns < -eps or ns > upper + eps:
+            actions.append({"action": "delete", "id": m["id"]})
+            continue
+        ns = max(0.0, ns)
+        es = m.get("end_seconds")
+        nes = None
+        if es is not None:
+            nes = min(max(es - start, ns), upper) if upper != float("inf") else max(es - start, ns)
+        actions.append({"action": "update", "id": m["id"], "seconds": ns, "end_seconds": nes})
+    return actions
 
 
 # ── Phase 1: task (UI-triggered) — encode, queue a scan, EXIT ────────────────
@@ -118,7 +164,7 @@ def trim(gql, args):
         _log("e", "[SVE] scene %s has no files" % scene_id)
         return
     src = scene["files"][0]["path"]
-    dst = derive_output_path(src)
+    dst = derive_output_path(src, start=start)  # encode in-point for marker remap
     tmp = dst + ".sve-partial" + os.path.splitext(dst)[1]
 
     # ffmpeg path comes from Stash config either way; precision also mirrors the
@@ -209,7 +255,38 @@ def _merge_one(gql, scene):
         _log("i", "[SVE] queued generate (overwrite) for scene %s" % target)
     except Exception as e:
         _log("e", "[SVE] generate FAILED (scene=%s): %s" % (target, e))
+
+    # Trim only: the timeline moved, so shift the scene's markers onto it (and drop
+    # markers whose moment was cut away). Crop/stretch keep the timeline → offset 0,
+    # no remap. Runs after the swap so we measure against the trimmed file.
+    offset = derive_trim_offset(edited["path"])
+    if offset > 0:
+        _remap_scene_markers(gql, target, offset)
     return True
+
+
+def _remap_scene_markers(gql, scene_id, offset):
+    try:
+        data = gql.call(*scene_markers_query(scene_id))["findScene"]
+    except Exception as e:
+        _log("e", "[SVE] marker query FAILED (scene=%s): %s" % (scene_id, e))
+        return
+    markers = data.get("scene_markers") or []
+    if not markers:
+        return
+    files = data.get("files") or []
+    new_dur = files[0].get("duration") if files else None  # files[0] = primary (trimmed)
+    shifted = removed = 0
+    for a in remap_markers(markers, offset, new_dur):
+        try:
+            if a["action"] == "delete":
+                gql.call(*marker_destroy_mutation(a["id"])); removed += 1
+            else:
+                gql.call(*marker_update_mutation(a["id"], a["seconds"], a["end_seconds"])); shifted += 1
+        except Exception as e:
+            _log("e", "[SVE] marker %s %s FAILED: %s" % (a["id"], a["action"], e))
+    _log("i", "[SVE] trim marker remap (shift %.3fs): %d shifted, %d removed"
+         % (offset, shifted, removed))
 
 
 def merge_hook(gql, new_scene_id):

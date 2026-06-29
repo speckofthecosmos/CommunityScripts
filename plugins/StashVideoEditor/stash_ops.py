@@ -65,8 +65,41 @@ def scene_merge_mutation(source_ids, destination_id):
 def generate_scene_mutation(scene_id):
     # overwrite=True so the new primary file's sprites/previews/phash replace the
     # original's (otherwise generate skips — assets already exist for the scene).
+    # markers/markerImagePreviews/markerScreenshots: marker previews are rendered
+    # from the file, so a primary swap (crop/stretch/trim) leaves them showing the
+    # OLD frames until regenerated.
     q = """mutation Generate($input: GenerateMetadataInput!) {
       metadataGenerate(input: $input)
     }"""
     return q, {"input": {"sceneIDs": [scene_id], "sprites": True, "previews": True,
-                         "covers": True, "phashes": True, "overwrite": True}}
+                         "covers": True, "phashes": True, "markers": True,
+                         "markerImagePreviews": True, "markerScreenshots": True,
+                         "overwrite": True}}
+
+def scene_markers_query(scene_id):
+    # Markers to remap after a trim, plus file durations to cull out-of-range ones.
+    q = """query SceneMarkers($id: ID!) {
+      findScene(id: $id) {
+        scene_markers { id seconds end_seconds }
+        files { id duration }
+      }
+    }"""
+    return q, {"id": scene_id}
+
+def marker_update_mutation(marker_id, seconds, end_seconds):
+    # Shift a marker onto the trimmed timeline. end_seconds omitted when absent so
+    # we don't clobber a no-end marker with null.
+    q = """mutation MarkerUpdate($input: SceneMarkerUpdateInput!) {
+      sceneMarkerUpdate(input: $input) { id }
+    }"""
+    data = {"id": marker_id, "seconds": seconds}
+    if end_seconds is not None:
+        data["end_seconds"] = end_seconds
+    return q, {"input": data}
+
+def marker_destroy_mutation(marker_id):
+    # A marker whose moment was trimmed away has nowhere to point — remove it.
+    q = """mutation MarkerDestroy($id: ID!) {
+      sceneMarkerDestroy(id: $id)
+    }"""
+    return q, {"id": marker_id}

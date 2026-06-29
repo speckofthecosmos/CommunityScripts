@@ -2,7 +2,8 @@ from stash_ops import (find_file_id_query, assign_file_mutation,
                        set_primary_mutation, generate_scene_mutation,
                        find_scene_query, get_configuration_query,
                        metadata_scan_mutation, scene_merge_mutation,
-                       find_edited_scenes_query)
+                       find_edited_scenes_query, scene_markers_query,
+                       marker_update_mutation, marker_destroy_mutation)
 
 def test_find_scene_query():
     q, v = find_scene_query("7")
@@ -55,3 +56,32 @@ def test_find_edited_scenes_query():
     assert "findScenes" in q
     assert ".edited." in q
     assert v == {}
+
+def test_generate_regenerates_marker_previews():
+    # Marker previews are keyed to the file; after a primary swap they must be
+    # regenerated or they show the OLD file's frames.
+    q, v = generate_scene_mutation("12")
+    assert v["input"]["markers"] is True
+    assert v["input"]["markerImagePreviews"] is True
+    assert v["input"]["markerScreenshots"] is True
+
+def test_scene_markers_query():
+    q, v = scene_markers_query("12")
+    assert "scene_markers" in q
+    assert "seconds" in q and "end_seconds" in q
+    assert "duration" in q  # need the trimmed file length to cull out-of-range markers
+    assert v == {"id": "12"}
+
+def test_marker_update_mutation_shifts_times():
+    q, v = marker_update_mutation("55", 18.0, 30.0)
+    assert "sceneMarkerUpdate" in q
+    assert v == {"input": {"id": "55", "seconds": 18.0, "end_seconds": 30.0}}
+
+def test_marker_update_mutation_omits_null_end():
+    q, v = marker_update_mutation("55", 18.0, None)
+    assert v == {"input": {"id": "55", "seconds": 18.0}}
+
+def test_marker_destroy_mutation():
+    q, v = marker_destroy_mutation("55")
+    assert "sceneMarkerDestroy" in q
+    assert v == {"id": "55"}
