@@ -75,11 +75,13 @@ def crop_reencode(gql, args):
         return
     os.replace(tmp, dst)  # finalize new file; source is never touched
 
-    _log("i", "[SVE] scanning new file")
-    gql.call(*metadata_scan_mutation(dst))
+    _log("i", "[SVE] scanning new file: %s" % dst)
+    scan_data = gql.call(*metadata_scan_mutation(dst))
+    _log("i", "[SVE] metadataScan job=%s; polling for index (scan is async/queued)" % scan_data.get("metadataScan"))
 
+    # metadataScan is queued and may not run for tens of seconds — poll generously.
     new_file_id = None
-    for _ in range(30):
+    for attempt in range(90):  # ~180s
         scenes = gql.call(*find_file_id_query(dst))["findScenes"]["scenes"]
         for s in scenes:
             for f in s["files"]:
@@ -90,10 +92,13 @@ def crop_reencode(gql, args):
                 break
         if new_file_id:
             break
-        time.sleep(1)
+        if attempt and attempt % 10 == 0:
+            _log("i", "[SVE] still waiting for scan to index file (%ds elapsed)" % (attempt * 2))
+        time.sleep(2)
     if not new_file_id:
-        _log("e", "[SVE] new file not indexed after scan: %s" % dst)
+        _log("e", "[SVE] new file not indexed after ~180s: %s" % dst)
         return
+    _log("i", "[SVE] new file indexed id=%s" % new_file_id)
 
     _log("i", "[SVE] merging new file id=%s into scene %s as primary" % (new_file_id, scene_id))
 
