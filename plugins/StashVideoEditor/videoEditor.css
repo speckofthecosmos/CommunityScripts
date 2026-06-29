@@ -32,8 +32,15 @@
 .sve-seek { flex: 1; }
 .sve-time { font-variant-numeric: tabular-nums; font-size: .85em; color: var(--gray-11, #888); min-width: 7.5em; text-align: right; }
 
-.sve-modebar { display: flex; gap: 10px; margin-top: 12px; }
+.sve-modebar { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .sve-mode-btn { font-weight: 600; }
+
+/* Lossless/Precision segmented control: two joined buttons, active one filled. */
+.sve-modeseg { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.sve-modeseg-label { font-size: .75em; letter-spacing: .05em; text-transform: uppercase; color: var(--gray-11, #888); }
+.sve-modeseg-btn { font-weight: 600; }
+.sve-modeseg-label + .sve-modeseg-btn { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.sve-modeseg-btn + .sve-modeseg-btn { margin-left: -1px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 
 /* Trim filmstrip timeline (reuses Stash's sprite sheet) + draggable in/out. */
 .sve-film {

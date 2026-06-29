@@ -549,10 +549,21 @@
         React.createElement("div", { className: "sve-modebar" },
           React.createElement(Button, { variant: "secondary", size: "sm", disabled: !range, onClick: setInHere }, "Set In @ playhead"),
           React.createElement(Button, { variant: "secondary", size: "sm", disabled: !range, onClick: setOutHere }, "Set Out @ playhead"),
-          React.createElement(Button, {
-            variant: lossless ? "primary" : "info", size: "sm", className: "sve-mode-btn",
-            onClick: () => setLossless(!lossless),
-          }, lossless ? "Lossless (keyframe-snap)" : "Precision (re-encode)")
+          // Segmented control: both modes shown, the active one filled. Each button
+          // selects its own mode (no ambiguous "what does toggling do?").
+          React.createElement("div", { className: "sve-modeseg", role: "group", "aria-label": "Trim mode" },
+            React.createElement("span", { className: "sve-modeseg-label" }, "Mode"),
+            React.createElement(Button, {
+              variant: lossless ? "success" : "outline-secondary", size: "sm",
+              className: "sve-modeseg-btn", active: lossless, "aria-pressed": lossless,
+              onClick: () => setLossless(true),
+            }, (lossless ? "✓ " : "") + "Lossless"),
+            React.createElement(Button, {
+              variant: !lossless ? "primary" : "outline-secondary", size: "sm",
+              className: "sve-modeseg-btn", active: !lossless, "aria-pressed": !lossless,
+              onClick: () => setLossless(false),
+            }, (!lossless ? "✓ " : "") + "Precision")
+          )
         ),
         React.createElement("div", { className: "sve-controls" },
           React.createElement("span", { className: "sve-outdims" }, "Selected: " + (range ? fmtRange + " (" + tm.formatTime(selDur) + ")" : "—")),
