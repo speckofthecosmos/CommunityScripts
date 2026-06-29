@@ -168,19 +168,29 @@
       }
     };
 
+    const sameRect = (a, b) => a && b &&
+      a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+
     const toggleMode = () => {
       setPlaying(false); // the <video> remounts across modes; resync transport state
       if (mode === "crop") {
         const fc = cm.rectToSourceCrop(box, rendered, natural);
         const cropBox = { x: box.x, y: box.y, w: box.w, h: box.h };
-        // baseFrame == cropBox ⇒ stretch starts UNDISTORTED at the crop's own aspect.
-        frozen.current = { crop: fc, baseFrame: { w: box.w, h: box.h }, cropBox: cropBox };
+        const prev = frozen.current;
+        // Resume the prior stretch frame if the crop is unchanged; otherwise start
+        // undistorted (frame == cropBox). baseFrame stays the crop's own dims, so the
+        // output-dim math is always measured from the undistorted reference.
+        const frame = (prev && prev.lastFrame && sameRect(prev.cropBox, cropBox))
+          ? prev.lastFrame : cropBox;
+        frozen.current = { crop: fc, baseFrame: { w: cropBox.w, h: cropBox.h }, cropBox: cropBox, lastFrame: frame };
+        setBox(frame);
         setCrop(fc);
-        setOutDims(cm.stretchOutputDims(fc, { w: box.w, h: box.h }, { w: box.w, h: box.h }));
+        setOutDims(cm.stretchOutputDims(fc, { w: frame.w, h: frame.h }, { w: cropBox.w, h: cropBox.h }));
         setMode("stretch");
       } else {
-        // Restore the crop box exactly as it was before stretching — don't treat the
-        // dragged output frame as a new crop.
+        // Remember the stretch frame so it can be resumed, then restore the crop box —
+        // don't treat the dragged output frame as a new crop.
+        if (frozen.current) frozen.current.lastFrame = { x: box.x, y: box.y, w: box.w, h: box.h };
         const cb = frozen.current ? frozen.current.cropBox : box;
         setBox(cb);
         commit(cb, "crop", rendered);
