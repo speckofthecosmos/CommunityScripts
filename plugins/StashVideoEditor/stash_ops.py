@@ -1,5 +1,26 @@
 # Pure GraphQL (query, variables) builders for the non-destructive primary-swap.
 
+def find_scene_query(scene_id):
+    q = """query FindScene($id: ID!) {
+      findScene(id: $id) { id files { id path width height video_codec } }
+    }"""
+    return q, {"id": scene_id}
+
+def get_configuration_query():
+    q = """query Configuration {
+      configuration { general {
+        ffmpegPath transcodeHardwareAcceleration
+        transcodeInputArgs transcodeOutputArgs generatedPath
+      } }
+    }"""
+    return q, {}
+
+def metadata_scan_mutation(path):
+    q = """mutation MetadataScan($input: ScanMetadataInput!) {
+      metadataScan(input: $input)
+    }"""
+    return q, {"input": {"paths": [path]}}
+
 def find_file_id_query(path):
     q = """query FindFileByPath($path: String!) {
       findScenes(scene_filter: {path: {value: $path, modifier: EQUALS}}) {

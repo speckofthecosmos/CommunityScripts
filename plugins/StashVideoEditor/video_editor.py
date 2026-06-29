@@ -4,13 +4,43 @@ import os
 import subprocess
 import sys
 import time
-
-import stashapi.log as log
-from stashapi.stashapp import StashInterface
+import urllib.request
 
 from ffmpeg_args import mirror_encode_args, build_vf, build_command
-from stash_ops import (find_file_id_query, assign_file_mutation,
-                       set_primary_mutation, generate_scene_mutation)
+from stash_ops import (find_scene_query, get_configuration_query,
+                       metadata_scan_mutation, find_file_id_query,
+                       assign_file_mutation, set_primary_mutation,
+                       generate_scene_mutation)
+
+
+def _log(level, msg):
+    sys.stderr.write("\x01%s\x02%s\n" % (level, msg))
+    sys.stderr.flush()
+
+
+class StashGQL:
+    def __init__(self, conn):
+        scheme = conn.get("Scheme", "http")
+        host = conn.get("Host", "localhost")
+        if host in ("", "0.0.0.0"):
+            host = "localhost"
+        port = conn.get("Port", 9999)
+        self.url = "%s://%s:%s/graphql" % (scheme, host, port)
+        self.headers = {"Content-Type": "application/json"}
+        cookie = conn.get("SessionCookie") or {}
+        if cookie.get("Name"):
+            self.headers["Cookie"] = "%s=%s" % (cookie["Name"], cookie.get("Value", ""))
+        if conn.get("ApiKey"):
+            self.headers["ApiKey"] = conn["ApiKey"]
+
+    def call(self, query, variables=None):
+        body = json.dumps({"query": query, "variables": variables or {}}).encode("utf-8")
+        req = urllib.request.Request(self.url, data=body, headers=self.headers, method="POST")
+        with urllib.request.urlopen(req) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        if payload.get("errors"):
+            raise RuntimeError("GraphQL error: %s" % payload["errors"])
+        return payload["data"]
 
 
 def derive_output_path(src):
@@ -18,40 +48,39 @@ def derive_output_path(src):
     return root + ".edited" + (ext if ext else ".mp4")
 
 
-def crop_reencode(stash, args):
+def crop_reencode(gql, args):
     scene_id = str(args["scene_id"])
     crop = args["crop"]
     out_w, out_h = int(args["out_w"]), int(args["out_h"])
 
-    scene = stash.find_scene(scene_id, "id files {id path width height video_codec}")
+    scene = gql.call(*find_scene_query(scene_id))["findScene"]
     if not scene or not scene.get("files"):
-        log.error("[SVE] scene %s has no files" % scene_id)
+        _log("e", "[SVE] scene %s has no files" % scene_id)
         return
     src = scene["files"][0]["path"]
     dst = derive_output_path(src)
     tmp = dst + ".sve-partial" + os.path.splitext(dst)[1]
 
-    cfg = stash.get_configuration()["general"]
+    cfg = gql.call(*get_configuration_query())["configuration"]["general"]
     enc = mirror_encode_args(cfg)
     vf = build_vf(crop, out_w, out_h)
     cmd = build_command(enc["ffmpeg"], src, tmp, vf, enc["input_args"], enc["output_args"])
 
-    log.info("[SVE] encoding: %s" % " ".join(cmd))
+    _log("i", "[SVE] encoding: %s" % " ".join(cmd))
     result = subprocess.run(cmd, stderr=subprocess.PIPE)
     if result.returncode != 0:
         if os.path.exists(tmp):
             os.remove(tmp)
-        log.error("[SVE] ffmpeg failed (%s): %s" % (result.returncode, result.stderr.decode(errors="replace")))
+        _log("e", "[SVE] ffmpeg failed (%s): %s" % (result.returncode, result.stderr.decode(errors="replace")))
         return
     os.replace(tmp, dst)  # finalize new file; source is never touched
 
-    log.info("[SVE] scanning new file")
-    stash.metadata_scan([dst])
+    _log("i", "[SVE] scanning new file")
+    gql.call(*metadata_scan_mutation(dst))
 
     new_file_id = None
     for _ in range(30):
-        q, v = find_file_id_query(dst)
-        scenes = stash.call_GQL(q, v)["findScenes"]["scenes"]
+        scenes = gql.call(*find_file_id_query(dst))["findScenes"]["scenes"]
         for s in scenes:
             for f in s["files"]:
                 if os.path.normpath(f["path"]) == os.path.normpath(dst):
@@ -63,23 +92,21 @@ def crop_reencode(stash, args):
             break
         time.sleep(1)
     if not new_file_id:
-        log.error("[SVE] new file not indexed after scan: %s" % dst)
+        _log("e", "[SVE] new file not indexed after scan: %s" % dst)
         return
 
     for builder in (assign_file_mutation, set_primary_mutation):
-        q, v = builder(scene_id, new_file_id)
-        stash.call_GQL(q, v)
-    q, v = generate_scene_mutation(scene_id)
-    stash.call_GQL(q, v)
-    log.info("[SVE] done: scene %s primary swapped to file %s" % (scene_id, new_file_id))
+        gql.call(*builder(scene_id, new_file_id))
+    gql.call(*generate_scene_mutation(scene_id))
+    _log("i", "[SVE] done: scene %s primary swapped to file %s" % (scene_id, new_file_id))
 
 
 def main():
     data = json.loads(sys.stdin.read())
-    stash = StashInterface(data["server_connection"])
+    gql = StashGQL(data["server_connection"])
     args = data.get("args", {})
     if args.get("mode") == "crop_reencode":
-        crop_reencode(stash, args)
+        crop_reencode(gql, args)
 
 
 if __name__ == "__main__":

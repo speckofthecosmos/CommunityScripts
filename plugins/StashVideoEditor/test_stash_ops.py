@@ -1,5 +1,22 @@
 from stash_ops import (find_file_id_query, assign_file_mutation,
-                       set_primary_mutation, generate_scene_mutation)
+                       set_primary_mutation, generate_scene_mutation,
+                       find_scene_query, get_configuration_query,
+                       metadata_scan_mutation)
+
+def test_find_scene_query():
+    q, v = find_scene_query("7")
+    assert "findScene" in q
+    assert v == {"id": "7"}
+
+def test_get_configuration_query():
+    q, v = get_configuration_query()
+    assert "configuration" in q
+    assert v == {}
+
+def test_metadata_scan_mutation():
+    q, v = metadata_scan_mutation("/x.mp4")
+    assert "metadataScan" in q
+    assert v == {"input": {"paths": ["/x.mp4"]}}
 
 def test_assign_file_mutation():
     q, v = assign_file_mutation("12", "99")
