@@ -277,6 +277,21 @@
 
     const submitDisabled = mode === "stretch" ? !outDims : !crop;
 
+    // What will actually be re-encoded, so the submit button states it outright.
+    let applyCrop = null, applyOut = null;
+    if (mode === "stretch") {
+      applyCrop = frozen.current ? frozen.current.crop : null;
+      applyOut = outDims;
+    } else if (crop) {
+      applyCrop = crop;
+      applyOut = { width: parseInt(outW, 10) || crop.width, height: parseInt(outH, 10) || crop.height };
+    }
+    const isStretched = applyCrop && applyOut &&
+      (applyOut.width !== applyCrop.width || applyOut.height !== applyCrop.height);
+    const applyLabel = applyOut
+      ? (isStretched ? "Stretch & re-encode" : "Crop & re-encode") + " → " + applyOut.width + "×" + applyOut.height
+      : "Crop & re-encode";
+
     return React.createElement(Modal, { show: props.show, onHide: props.onHide, size: "lg" },
       React.createElement(Modal.Header, { closeButton: true },
         React.createElement(Modal.Title, null, "Crop & re-encode")),
@@ -309,7 +324,7 @@
       ),
       React.createElement(Modal.Footer, null,
         React.createElement(Button, { variant: "secondary", onClick: props.onHide }, "Cancel"),
-        React.createElement(Button, { variant: "primary", disabled: submitDisabled, onClick: submit }, "Crop & re-encode")
+        React.createElement(Button, { variant: "primary", disabled: submitDisabled, onClick: submit }, applyLabel)
       )
     );
   }
