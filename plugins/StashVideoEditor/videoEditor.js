@@ -573,8 +573,16 @@
   function TrimButton(props) {
     const { Button } = PluginApi.libraries.Bootstrap; // lazy
     const [show, setShow] = useState(false);
+    // The trim helpers (timeMath/spriteVtt) were added to the manifest in v1.2.
+    // If only the JS hot-reloaded but the manifest is still server-cached, they
+    // won't be in the served bundle yet. Guard so we surface a clear instruction
+    // instead of throwing and white-screening the scene tab.
+    const onOpen = () => {
+      if (window.SVETimeMath && window.SVESpriteVtt) { setShow(true); return; }
+      window.alert("Trim needs a plugin reload: Settings → Plugins → \"Reload plugins\", then refresh this page (the v1.2 update added new script files).");
+    };
     return React.createElement(React.Fragment, null,
-      React.createElement(Button, { variant: "secondary", className: "sve-open-btn", onClick: () => setShow(true) }, "Trim"),
+      React.createElement(Button, { variant: "secondary", className: "sve-open-btn", onClick: onOpen }, "Trim"),
       show && React.createElement(TrimModal, { sceneId: props.sceneId, show: true, onHide: () => setShow(false) })
     );
   }
