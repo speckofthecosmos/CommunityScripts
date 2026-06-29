@@ -8,7 +8,8 @@ import urllib.request
 from ffmpeg_args import mirror_encode_args, build_vf, build_command
 from stash_ops import (find_scene_query, get_configuration_query,
                        metadata_scan_mutation, find_file_id_query,
-                       scene_merge_mutation, generate_scene_mutation)
+                       scene_merge_mutation, generate_scene_mutation,
+                       find_edited_scenes_query)
 
 EDITED_SUFFIX = ".edited"
 
@@ -97,21 +98,20 @@ def crop_reencode(gql, args):
 # ── Phase 2: hook (Scene.Create.Post) — merge the new edited scene into source ─
 # Runs inside the scan job, so it never waits on a queued job. sceneMerge is a
 # synchronous mutation (not a job), so there is no deadlock.
-def merge_hook(gql, new_scene_id):
-    if not new_scene_id:
-        return
-    new_scene_id = str(new_scene_id)
-    scene = gql.call(*find_scene_query(new_scene_id))["findScene"]
-    if not scene or not scene.get("files"):
-        return
-    f = scene["files"][0]
-    edited_path, edited_file_id = f["path"], f["id"]
+def _merge_one(gql, scene):
+    """scene: {id, files:[{id,path}]}. Merge this edited scene into its source
+    scene (edited file becomes primary). Returns True on a successful merge."""
+    new_scene_id = str(scene["id"])
+    files = scene.get("files") or []
+    if not files:
+        return False
+    edited_path, edited_file_id = files[0]["path"], files[0]["id"]
 
     source_path = derive_source_path(edited_path)
     if not source_path:
-        return  # not one of our *.edited.* files — ignore
+        return False  # not one of our *.edited.* files — ignore
 
-    _log("i", "[SVE] hook: edited scene %s file=%s; resolving source %s"
+    _log("i", "[SVE] edited scene %s file=%s; resolving source %s"
          % (new_scene_id, edited_file_id, source_path))
     matches = gql.call(*find_file_id_query(source_path))["findScenes"]["scenes"]
     source_scene_id = None
@@ -123,8 +123,8 @@ def merge_hook(gql, new_scene_id):
         if source_scene_id:
             break
     if not source_scene_id or source_scene_id == new_scene_id:
-        _log("e", "[SVE] hook: no source scene for %s — leaving new scene as-is" % source_path)
-        return
+        _log("e", "[SVE] no source scene for %s — leaving new scene as-is" % source_path)
+        return False
 
     try:
         r = gql.call(*scene_merge_mutation([new_scene_id], source_scene_id, edited_file_id))
@@ -132,13 +132,30 @@ def merge_hook(gql, new_scene_id):
              % (new_scene_id, source_scene_id, edited_file_id, r))
     except Exception as e:
         _log("e", "[SVE] sceneMerge FAILED (new=%s source=%s): %s" % (new_scene_id, source_scene_id, e))
-        return
+        return False
 
     try:
         gql.call(*generate_scene_mutation(source_scene_id))
         _log("i", "[SVE] queued generate for scene %s" % source_scene_id)
     except Exception as e:
         _log("e", "[SVE] generate FAILED (scene=%s): %s" % (source_scene_id, e))
+    return True
+
+
+def merge_hook(gql, new_scene_id):
+    if not new_scene_id:
+        return
+    scene = gql.call(*find_scene_query(str(new_scene_id)))["findScene"]
+    if scene:
+        _merge_one(gql, scene)
+
+
+def merge_all(gql):
+    """Manual fallback task: merge every orphan *.edited scene into its source."""
+    scenes = gql.call(*find_edited_scenes_query())["findScenes"]["scenes"]
+    _log("i", "[SVE] merge_all: %d candidate .edited scene(s)" % len(scenes))
+    merged = sum(1 for s in scenes if _merge_one(gql, s))
+    _log("i", "[SVE] merge_all done: merged %d/%d" % (merged, len(scenes)))
 
 
 def main():
@@ -147,6 +164,8 @@ def main():
     args = data.get("args", {})
     if args.get("mode") == "crop_reencode":
         crop_reencode(gql, args)
+    elif args.get("mode") == "merge":
+        merge_all(gql)
     elif "hookContext" in args:
         ctx = args["hookContext"] or {}
         if str(ctx.get("type", "")).startswith("Scene.Create"):

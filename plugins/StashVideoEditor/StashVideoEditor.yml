@@ -19,6 +19,10 @@ tasks:
     description: Crop/stretch + re-encode a scene's video and set the result as primary file
     defaultArgs:
       mode: crop_reencode
+  - name: Merge edited scenes
+    description: Fallback/cleanup — merge any orphan *.edited scenes into their source scenes (normally automatic via the hook)
+    defaultArgs:
+      mode: merge
 hooks:
   - name: Merge edited file into source scene
     description: When a scan creates a *.edited scene, merge it into the source scene as primary (finishes the crop task; avoids the serial-job-queue deadlock).
