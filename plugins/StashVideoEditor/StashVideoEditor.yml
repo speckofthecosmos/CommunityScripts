@@ -12,7 +12,7 @@ ui:
     - videoEditor.css
 exec:
   - python3
-  - /root/.stash/plugins/StashVideoEditor/video_editor.py
+  - "{pluginDir}/video_editor.py"
 interface: raw
 tasks:
   - name: Crop and re-encode
