@@ -125,13 +125,18 @@ def _encode(spec, cmd, tmp, dst):
     Logs the exact reason for a local fallback (content-free). Returns 'offload'/'local'."""
     url, token = offload.offload_config()
     if not url:
-        _log("i", "[SVE] offload disabled (SVE_OFFLOAD_URL not seen by plugin) — local")
+        _log("i", "[SVE] offload disabled (SVE_OFFLOAD_URL not seen by plugin) — encoding local")
     elif not offload.http_health(url, token):
-        _log("i", "[SVE] offload service not healthy/reachable — local")
-    elif offload.http_post(url, token, spec):
-        return "offload"
+        _log("i", "[SVE] offload service unreachable — encoding local")
     else:
-        _log("i", "[SVE] offload POST failed (service returned not-ok) — local")
+        # Announce BEFORE the blocking POST so the multi-second Mac encode isn't a
+        # silent gap in the Stash log.
+        _log("i", "[SVE] offloading %s to Mac encode service (waiting for HW encode)…"
+             % spec.get("op"))
+        if offload.http_post(url, token, spec):
+            _log("i", "[SVE] Mac encode complete")
+            return "offload"
+        _log("i", "[SVE] offload POST failed (service returned not-ok) — encoding local")
     _run_local_encode(cmd, tmp, dst)
     return "local"
 
