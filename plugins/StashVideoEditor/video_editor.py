@@ -163,7 +163,7 @@ def crop_reencode(gql, args):
     vf = build_vf(crop, out_w, out_h)
     cmd = build_command(enc["ffmpeg"], src, tmp, vf, enc["input_args"], enc["output_args"])
 
-    spec = offload.build_crop_spec(src, dst, crop, out_w, out_h,
+    spec = offload.build_crop_spec(scene_id, src, dst, crop, out_w, out_h,
                                    {"output_args": enc["output_args"]})
     try:
         where = _encode(spec, cmd, tmp, dst)
@@ -215,7 +215,7 @@ def trim(gql, args):
         else:
             cmd = build_trim_command(enc["ffmpeg"], src, tmp, start, end, lossless=False,
                                      input_args=enc["input_args"], output_args=enc["output_args"])
-            spec = offload.build_trim_spec(src, dst, start, end,
+            spec = offload.build_trim_spec(scene_id, src, dst, start, end,
                                            {"output_args": enc["output_args"]})
             where = _encode(spec, cmd, tmp, dst)
     except Exception as e:

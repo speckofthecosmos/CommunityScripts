@@ -16,13 +16,14 @@ def offload_config():
     return (url, token) if url else (None, None)
 
 
-def build_crop_spec(src, dst, crop, out_w, out_h, encode):
-    return {"op": "crop", "src": src, "dst": dst, "crop": crop,
+def build_crop_spec(scene_id, src, dst, crop, out_w, out_h, encode):
+    return {"op": "crop", "scene_id": scene_id, "src": src, "dst": dst, "crop": crop,
             "out_w": out_w, "out_h": out_h, "encode": encode}
 
 
-def build_trim_spec(src, dst, start, end, encode):
-    return {"op": "trim", "src": src, "dst": dst, "start": start, "end": end, "encode": encode}
+def build_trim_spec(scene_id, src, dst, start, end, encode):
+    return {"op": "trim", "scene_id": scene_id, "src": src, "dst": dst,
+            "start": start, "end": end, "encode": encode}
 
 
 def choose_and_encode(spec, *, url, token, health, post, local):

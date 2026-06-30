@@ -2,14 +2,14 @@ from offload import build_crop_spec, build_trim_spec, choose_and_encode
 
 
 def test_build_crop_spec():
-    s = build_crop_spec("/data/a.mp4", "/data/a.edited.mp4",
+    s = build_crop_spec("42", "/data/a.mp4", "/data/a.edited.mp4",
                         {"x": 0, "y": 0, "width": 10, "height": 10}, 10, 10, {"output_args": []})
-    assert s["op"] == "crop" and s["src"] == "/data/a.mp4" and s["out_w"] == 10
+    assert s["op"] == "crop" and s["scene_id"] == "42" and s["src"] == "/data/a.mp4" and s["out_w"] == 10
 
 
 def test_build_trim_spec():
-    s = build_trim_spec("/data/a.mp4", "/data/a.edited.mp4", 1.0, 2.0, {"output_args": []})
-    assert s["op"] == "trim" and s["start"] == 1.0 and s["end"] == 2.0
+    s = build_trim_spec("42", "/data/a.mp4", "/data/a.edited.mp4", 1.0, 2.0, {"output_args": []})
+    assert s["op"] == "trim" and s["scene_id"] == "42" and s["start"] == 1.0 and s["end"] == 2.0
 
 
 def test_choose_local_when_unconfigured():
