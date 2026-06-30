@@ -122,12 +122,18 @@ def _run_local_encode(cmd, tmp, dst):
 def _encode(spec, cmd, tmp, dst):
     """Best-effort: encode on the Mac HW service (path-mode) when configured/reachable,
     else local ffmpeg. On offload success the Mac wrote `dst` over the shared NFS mount.
-    Returns 'offload' or 'local'."""
+    Logs the exact reason for a local fallback (content-free). Returns 'offload'/'local'."""
     url, token = offload.offload_config()
-    return offload.choose_and_encode(
-        spec, url=url, token=token,
-        health=offload.http_health, post=offload.http_post,
-        local=lambda: _run_local_encode(cmd, tmp, dst))
+    if not url:
+        _log("i", "[SVE] offload disabled (SVE_OFFLOAD_URL not seen by plugin) — local")
+    elif not offload.http_health(url, token):
+        _log("i", "[SVE] offload service not healthy/reachable — local")
+    elif offload.http_post(url, token, spec):
+        return "offload"
+    else:
+        _log("i", "[SVE] offload POST failed (service returned not-ok) — local")
+    _run_local_encode(cmd, tmp, dst)
+    return "local"
 
 
 # ── Phase 1: task (UI-triggered) — encode, queue a scan, EXIT ────────────────
