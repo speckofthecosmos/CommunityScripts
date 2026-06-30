@@ -107,14 +107,15 @@ def remap_markers(markers, start, new_duration, eps=0.05):
 
 
 def _run_local_encode(cmd, tmp, dst):
-    """Run ffmpeg locally (in the Stash container) → atomic replace. Raises on failure."""
-    _log("i", "[SVE] encoding locally: %s" % " ".join(cmd))
+    """Run ffmpeg locally (in the Stash container) → atomic replace. Raises on failure.
+    Logs are content-free (no command/paths) — the library is privacy-partitioned."""
+    _log("i", "[SVE] encoding locally")
     result = subprocess.run(cmd, stderr=subprocess.PIPE)
     if result.returncode != 0:
         if os.path.exists(tmp):
             os.remove(tmp)
-        raise RuntimeError("ffmpeg failed (%s): %s"
-                           % (result.returncode, result.stderr.decode(errors="replace")))
+        # ffmpeg stderr can embed the source path — report only the code.
+        raise RuntimeError("ffmpeg failed (returncode %s)" % result.returncode)
     os.replace(tmp, dst)  # finalize new file; source is never touched
 
 
@@ -156,9 +157,9 @@ def crop_reencode(gql, args):
     try:
         where = _encode(spec, cmd, tmp, dst)
     except Exception as e:
-        _log("e", "[SVE] %s" % e)
+        _log("e", "[SVE] crop failed scene %s: %s" % (scene_id, e))
         return
-    _log("i", "[SVE] cropped via %s -> %s" % (where, dst))
+    _log("i", "[SVE] cropped scene %s via %s" % (scene_id, where))
 
     scan_data = gql.call(*metadata_scan_mutation(dst))
     _log("i", "[SVE] queued scan job=%s; merge runs via Scene.Create.Post hook"
@@ -207,10 +208,10 @@ def trim(gql, args):
                                            {"output_args": enc["output_args"]})
             where = _encode(spec, cmd, tmp, dst)
     except Exception as e:
-        _log("e", "[SVE] %s" % e)
+        _log("e", "[SVE] trim failed scene %s: %s" % (scene_id, e))
         return
-    _log("i", "[SVE] trimmed (%s) via %s -> %s"
-         % ("lossless" if lossless else "precision", where, dst))
+    _log("i", "[SVE] trimmed scene %s (%s) via %s"
+         % (scene_id, "lossless" if lossless else "precision", where))
 
     scan_data = gql.call(*metadata_scan_mutation(dst))
     _log("i", "[SVE] queued scan job=%s; merge runs via Scene.Create.Post hook"
@@ -255,7 +256,7 @@ def _merge_one(gql, scene):
             if target:
                 break
         if not target or target == sid:
-            _log("e", "[SVE] no source scene for %s — leaving new scene as-is" % source_path)
+            _log("e", "[SVE] no source scene for edited scene %s — leaving as-is" % sid)
             return False
         try:
             r = gql.call(*scene_merge_mutation([sid], target))
