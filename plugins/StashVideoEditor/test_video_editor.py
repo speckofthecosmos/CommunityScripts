@@ -1,35 +1,31 @@
 from video_editor import (derive_output_path, derive_source_path,
                           derive_trim_offset, remap_markers,
-                          imageclip_encode_ext, imageclip_edited_path)
+                          imageclip_edited_path)
 
 
 # ── Image-clip paths ─────────────────────────────────────────────────────────
-# A `.vclip` is a renamed video; ffmpeg can't mux to `.vclip`, so the encode
-# target must carry the real container extension, on the same directory as the
-# source (so the final swap is an atomic same-fs rename).
+# The crop re-encodes to H.264, so the encode target is ALWAYS `.mp4` (which accepts
+# H.264) regardless of the source's inner extension — that extension can't be trusted
+# as a container (`.webm` rejects H.264; a non-standard tag like `.web` isn't muxable
+# at all). Same directory as the source so the final swap is an atomic same-fs rename.
 
-def test_imageclip_encode_ext_peels_vclip():
-    assert imageclip_encode_ext("/lib/clip.mp4.vclip") == ".mp4"
-    assert imageclip_encode_ext("/lib/clip.webm.vclip") == ".webm"
-
-def test_imageclip_encode_ext_uppercase_vclip():
-    assert imageclip_encode_ext("/lib/clip.MP4.VCLIP") == ".MP4"
-
-def test_imageclip_encode_ext_non_vclip_uses_own_ext():
-    assert imageclip_encode_ext("/lib/clip.mp4") == ".mp4"
-
-def test_imageclip_encode_ext_defaults_to_mp4():
-    assert imageclip_encode_ext("/lib/clip.vclip") == ".mp4"  # no inner ext
-
-def test_imageclip_edited_path_is_sibling_with_real_ext():
+def test_imageclip_edited_path_always_mp4():
     assert imageclip_edited_path("/lib/clip.mp4.vclip") == "/lib/clip.mp4.sve-imgedit.mp4"
+
+def test_imageclip_edited_path_webm_source_still_mp4():
+    # webm rejects H.264 — must NOT output .webm
+    assert imageclip_edited_path("/lib/clip.webm.vclip") == "/lib/clip.webm.sve-imgedit.mp4"
+
+def test_imageclip_edited_path_dotweb_regression():
+    # `.web.vclip` (real library case) broke ffmpeg: "Unable to choose an output format"
+    assert imageclip_edited_path("/lib/x.web.vclip") == "/lib/x.web.sve-imgedit.mp4"
 
 def test_imageclip_edited_path_non_vclip():
     assert imageclip_edited_path("/lib/clip.mp4") == "/lib/clip.sve-imgedit.mp4"
 
 def test_imageclip_edited_path_same_directory():
     import os
-    src = "/lib/sub dir/clip.webm.vclip"
+    src = "/lib/sub dir/clip with spaces.web.vclip"
     assert os.path.dirname(imageclip_edited_path(src)) == os.path.dirname(src)
 
 

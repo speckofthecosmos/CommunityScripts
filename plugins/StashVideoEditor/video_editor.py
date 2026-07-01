@@ -185,22 +185,20 @@ def crop_reencode(gql, args):
 # (Stash ignores that extension), move the edited file onto the canonical path, and
 # rescan so Stash re-fingerprints the changed file IN PLACE — preserving the image
 # record and all its metadata. No new record, no merge, no markers (clips have none).
-def imageclip_encode_ext(path):
-    """The real container extension to hand ffmpeg. A `.vclip` file is a renamed
-    video (e.g. `clip.mp4.vclip`); ffmpeg can't mux to `.vclip`, so peel it back to
-    the underlying `.mp4`/`.webm`. Non-vclip video images use their own extension."""
-    root, ext = os.path.splitext(path)
-    if ext.lower() == ".vclip":
-        return os.path.splitext(root)[1] or ".mp4"
-    return ext or ".mp4"
-
-
 def imageclip_edited_path(path):
-    """Sibling encode target with a real media extension (so ffmpeg picks the muxer)
-    on the SAME directory as the source (so the final os.replace is an atomic rename):
-    `/x/clip.mp4.vclip` → `/x/clip.mp4.sve-imgedit.mp4`."""
+    """Sibling encode target, ALWAYS `.mp4`, on the SAME directory as the source (so
+    the final os.replace is an atomic rename): `/x/clip.web.vclip` →
+    `/x/clip.web.sve-imgedit.mp4`.
+
+    Why always mp4 (not the source's extension): the crop re-encodes to H.264 (Stash's
+    transcode default), so the output CONTAINER must accept H.264. The source's own
+    inner extension can't be trusted for that — it may be `.webm` (which rejects H.264),
+    or a non-standard tag like `.web`/`.gif` that ffmpeg can't mux at all ("Unable to
+    choose an output format for '…'", a sub-second rc=234 failure on BOTH the local and
+    Mac-offload encoders). mp4 always accepts H.264; the file is then renamed onto the
+    `.vclip` path, so the real container is invisible to Stash either way."""
     root, _ = os.path.splitext(path)  # drops the trailing `.vclip` (or real ext)
-    return root + ".sve-imgedit" + imageclip_encode_ext(path)
+    return root + ".sve-imgedit.mp4"
 
 
 def image_crop(gql, args):
