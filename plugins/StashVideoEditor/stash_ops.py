@@ -6,6 +6,21 @@ def find_scene_query(scene_id):
     }"""
     return q, {"id": scene_id}
 
+def find_image_query(image_id):
+    # Image clips are a VideoFile filed under the Image model. __typename lets us
+    # pick the video file (the croppable one) out of the visual_files union.
+    q = """query FindImage($id: ID!) {
+      findImage(id: $id) {
+        id
+        visual_files {
+          __typename
+          ... on VideoFile { id path width height }
+          ... on ImageFile { id path width height }
+        }
+      }
+    }"""
+    return q, {"id": image_id}
+
 def get_configuration_query():
     q = """query Configuration {
       configuration { general {
@@ -75,6 +90,19 @@ def generate_scene_mutation(scene_id):
                          "covers": True, "phashes": True, "markers": True,
                          "markerImagePreviews": True, "markerScreenshots": True,
                          "overwrite": True}}
+
+def generate_image_mutation(image_id):
+    # Image-clip counterpart of generate_scene_mutation, for the overwrite-in-place
+    # crop swap. overwrite=True or Stash skips (preview/thumbnail assets already
+    # exist for the image — this is why the clip's preview kept showing the OLD,
+    # uncropped frame until a manual Generate). clipPreviews = the animated looping
+    # preview for a video image clip; imageThumbnails = the static thumbnail.
+    q = """mutation Generate($input: GenerateMetadataInput!) {
+      metadataGenerate(input: $input)
+    }"""
+    return q, {"input": {"imageIDs": [image_id], "clipPreviews": True,
+                         "imageThumbnails": True, "imagePreviews": True,
+                         "imagePhashes": True, "overwrite": True}}
 
 def scene_markers_query(scene_id):
     # Markers to remap after a trim, plus file durations to cull out-of-range ones.

@@ -38,6 +38,19 @@
     return csLib.callGQL({ query, variables: { args } });
   }
 
+  // Image clips have no imageAssignFile/imageMerge, so the backend does an
+  // overwrite-in-place swap (see video_editor.py:image_crop). Same crop geometry,
+  // different task + id. Reuses the "Crop and re-encode" task; mode drives dispatch.
+  async function runImageCropTask(imageId, crop, outW, outH) {
+    const csLib = window.csLib; // lazy: loaded by CommunityScriptsUILibrary
+    const query = `mutation Run($args: Map!) {
+      runPluginTask(plugin_id: "StashVideoEditor", task_name: "Crop and re-encode", args_map: $args)
+    }`;
+    const args = { mode: "image_crop", image_id: imageId,
+                   crop, out_w: outW, out_h: outH };
+    return csLib.callGQL({ query, variables: { args } });
+  }
+
   const MIN_TRIM = 0.25; // seconds — shortest selectable trim range
 
   async function runTrimTask(sceneId, start, end, lossless) {
@@ -73,7 +86,9 @@
     const naturalRef = useRef(null);
     const inited = useRef(false);                     // init the box exactly once (survives video remounts)
 
-    const streamUrl = `/scene/${props.sceneId}/stream`;
+    // Scenes stream from /scene/:id/stream; image clips pass their own URL
+    // (image.paths.image) in via props since there is no image stream route.
+    const streamUrl = props.streamUrl || `/scene/${props.sceneId}/stream`;
     const rendered = natural ? cm.getRenderedVideoRect(natural, CONTAINER) : null;
 
     // Push the current geometry up as crop (crop mode) or derived out dims (stretch mode).
@@ -221,7 +236,11 @@
         h = parseInt(outH, 10) || crop.height;
       }
       try {
-        await runCropTask(props.sceneId, theCrop, w, h);
+        if (props.imageId) {
+          await runImageCropTask(props.imageId, theCrop, w, h);
+        } else {
+          await runCropTask(props.sceneId, theCrop, w, h);
+        }
       } catch (err) {
         console.error("[StashVideoEditor] crop task failed", err);
       } finally {
@@ -347,6 +366,18 @@
     return React.createElement(React.Fragment, null,
       React.createElement(Button, { variant: "secondary", className: "sve-open-btn", onClick: () => setShow(true) }, "Crop & re-encode"),
       show && React.createElement(EditorModal, { sceneId: props.sceneId, show: true, onHide: () => setShow(false) })
+    );
+  }
+
+  // Image-clip crop button. Images expose no ScenePage.TabContent-style React patch
+  // anchor, so this is mounted via DOM injection (see setupImageCropButton) rather
+  // than PluginApi.patch. Opens the same EditorModal, wired to the image clip.
+  function ImageCropButton(props) {
+    const { Button } = PluginApi.libraries.Bootstrap; // lazy
+    const [show, setShow] = useState(false);
+    return React.createElement(React.Fragment, null,
+      React.createElement(Button, { variant: "secondary", className: "sve-open-btn", onClick: () => setShow(true) }, "Crop & re-encode"),
+      show && React.createElement(EditorModal, { imageId: props.imageId, streamUrl: props.streamUrl, show: true, onHide: () => setShow(false) })
     );
   }
 
@@ -598,6 +629,28 @@
     );
   }
 
+  // Mount the image-clip crop button into the image detail page's toolbar. Idempotent
+  // (guarded by the mount id) because PathElementListener re-fires on every navigation.
+  // Only image clips (a <video> on the image page) are croppable — plain images are skipped.
+  function setupImageCropButton() {
+    const mountId = "sve-image-crop-mount";
+    if (document.getElementById(mountId)) return;
+    const imageId = window.location.pathname.replace("/images/", "").split("/")[0];
+    if (!imageId) return;
+    const video = document.querySelector("video.image-image"); // present only for clips
+    if (!video) return;
+    const streamUrl = video.currentSrc || video.getAttribute("src");
+    if (!streamUrl) return;
+    const toolbar = document.querySelector(".image-toolbar");
+    if (!toolbar) return;
+    const mount = document.createElement("span");
+    mount.id = mountId;
+    mount.className = "image-toolbar-group";
+    toolbar.appendChild(mount);
+    PluginApi.ReactDOM.render(
+      React.createElement(ImageCropButton, { imageId, streamUrl }), mount);
+  }
+
   // Guard registration so a plugin error can never block Stash's UI bootstrap.
   try {
     PluginApi.patch.before("ScenePage.TabContent", function (props) {
@@ -608,6 +661,12 @@
       children.push(React.createElement(TrimButton, { key: "sve-trim-btn", sceneId }));
       return [{ children: React.createElement(React.Fragment, null, ...children) }];
     });
+    // Wait on the clip's <video> (not the toolbar): it renders after the toolbar, so
+    // its presence guarantees both exist, and it only appears for clips (plain images
+    // render an <img>), scoping the button to croppable image clips automatically.
+    if (window.csLib && window.csLib.PathElementListener) {
+      window.csLib.PathElementListener("/images/", "video.image-image", setupImageCropButton);
+    }
     console.log("[StashVideoEditor] loaded");
   } catch (e) {
     console.error("[StashVideoEditor] registration failed (UI unaffected)", e);

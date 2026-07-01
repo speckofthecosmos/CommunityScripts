@@ -9,10 +9,11 @@ import urllib.request
 import offload
 from ffmpeg_args import (mirror_encode_args, build_vf, build_command,
                          build_trim_command)
-from stash_ops import (find_scene_query, get_configuration_query,
+from stash_ops import (find_scene_query, find_image_query, get_configuration_query,
                        metadata_scan_mutation, find_file_id_query,
                        scene_merge_mutation, set_primary_mutation,
-                       generate_scene_mutation, find_edited_scenes_query,
+                       generate_scene_mutation, generate_image_mutation,
+                       find_edited_scenes_query,
                        scene_markers_query, marker_update_mutation,
                        marker_destroy_mutation)
 
@@ -175,6 +176,88 @@ def crop_reencode(gql, args):
     scan_data = gql.call(*metadata_scan_mutation(dst))
     _log("i", "[SVE] queued scan job=%s; merge runs via Scene.Create.Post hook"
          % scan_data.get("metadataScan"))
+
+
+# ── Image-clip crop (UI-triggered) — overwrite-in-place swap ─────────────────
+# Image clips (.vclip videos filed under the Image model) have no imageAssignFile /
+# imageMerge API, so the scene-style scan→merge→setPrimary flow can't be reused.
+# Instead we re-encode to a sibling file, keep the original as a `.sve-bak` sidecar
+# (Stash ignores that extension), move the edited file onto the canonical path, and
+# rescan so Stash re-fingerprints the changed file IN PLACE — preserving the image
+# record and all its metadata. No new record, no merge, no markers (clips have none).
+def imageclip_encode_ext(path):
+    """The real container extension to hand ffmpeg. A `.vclip` file is a renamed
+    video (e.g. `clip.mp4.vclip`); ffmpeg can't mux to `.vclip`, so peel it back to
+    the underlying `.mp4`/`.webm`. Non-vclip video images use their own extension."""
+    root, ext = os.path.splitext(path)
+    if ext.lower() == ".vclip":
+        return os.path.splitext(root)[1] or ".mp4"
+    return ext or ".mp4"
+
+
+def imageclip_edited_path(path):
+    """Sibling encode target with a real media extension (so ffmpeg picks the muxer)
+    on the SAME directory as the source (so the final os.replace is an atomic rename):
+    `/x/clip.mp4.vclip` → `/x/clip.mp4.sve-imgedit.mp4`."""
+    root, _ = os.path.splitext(path)  # drops the trailing `.vclip` (or real ext)
+    return root + ".sve-imgedit" + imageclip_encode_ext(path)
+
+
+def image_crop(gql, args):
+    image_id = str(args["image_id"])
+    crop = args["crop"]
+    out_w, out_h = int(args["out_w"]), int(args["out_h"])
+
+    image = gql.call(*find_image_query(image_id)).get("findImage")
+    files = (image or {}).get("visual_files") or []
+    vfile = next((f for f in files if f.get("__typename") == "VideoFile"), None)
+    if not vfile:
+        _log("e", "[SVE] image %s has no video (vclip) file to crop" % image_id)
+        return
+    src = vfile["path"]
+    edited = imageclip_edited_path(src)
+    tmp = edited + ".sve-partial" + os.path.splitext(edited)[1]
+
+    cfg = gql.call(*get_configuration_query())["configuration"]["general"]
+    enc = mirror_encode_args(cfg)
+    vf = build_vf(crop, out_w, out_h)
+    cmd = build_command(enc["ffmpeg"], src, tmp, vf, enc["input_args"], enc["output_args"])
+
+    spec = offload.build_crop_spec(image_id, src, edited, crop, out_w, out_h,
+                                   {"output_args": enc["output_args"]})
+    try:
+        where = _encode(spec, cmd, tmp, edited)
+    except Exception as e:
+        _log("e", "[SVE] image crop failed image %s: %s" % (image_id, e))
+        return
+
+    backup = src + ".sve-bak"
+    try:
+        if os.path.exists(backup):
+            os.remove(backup)          # keep only the most-recent original as undo
+        os.replace(src, backup)        # original → sidecar (never deleted)
+        os.replace(edited, src)        # edited takes the canonical path
+    except Exception as e:
+        # src is intact unless the second replace failed; edited still holds the crop.
+        _log("e", "[SVE] image %s swap failed: %s" % (image_id, e))
+        return
+    _log("i", "[SVE] cropped image %s via %s (original kept as .sve-bak)" % (image_id, where))
+
+    scan_data = gql.call(*metadata_scan_mutation(src))
+    _log("i", "[SVE] queued scan job=%s to refresh image %s dimensions in place"
+         % (scan_data.get("metadataScan"), image_id))
+
+    # Regenerate the clip's preview/thumbnail — the scan re-fingerprints the file but
+    # does NOT redraw generated assets, so without this the animated preview keeps
+    # showing the pre-crop frame. Queued after the scan; Stash's serial job queue runs
+    # scan → generate in order, so generate sees the re-fingerprinted file.
+    try:
+        gen = gql.call(*generate_image_mutation(image_id))
+        _log("i", "[SVE] queued generate job=%s (clipPreview/thumbnail overwrite) for image %s"
+             % (gen.get("metadataGenerate"), image_id))
+    except Exception as e:
+        _log("e", "[SVE] image %s generate queue FAILED (crop applied; preview stays stale): %s"
+             % (image_id, e))
 
 
 # ── Phase 1b: task (UI-triggered) — lossless/precision TRIM, same swap flow ───
@@ -346,6 +429,8 @@ def main():
     args = data.get("args", {})
     if args.get("mode") == "crop_reencode":
         crop_reencode(gql, args)
+    elif args.get("mode") == "image_crop":
+        image_crop(gql, args)
     elif args.get("mode") in ("trim", "lossless_trim", "precision_trim"):
         trim(gql, args)
     elif args.get("mode") == "merge":

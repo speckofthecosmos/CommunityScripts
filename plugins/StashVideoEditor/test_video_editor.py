@@ -1,5 +1,36 @@
 from video_editor import (derive_output_path, derive_source_path,
-                          derive_trim_offset, remap_markers)
+                          derive_trim_offset, remap_markers,
+                          imageclip_encode_ext, imageclip_edited_path)
+
+
+# ── Image-clip paths ─────────────────────────────────────────────────────────
+# A `.vclip` is a renamed video; ffmpeg can't mux to `.vclip`, so the encode
+# target must carry the real container extension, on the same directory as the
+# source (so the final swap is an atomic same-fs rename).
+
+def test_imageclip_encode_ext_peels_vclip():
+    assert imageclip_encode_ext("/lib/clip.mp4.vclip") == ".mp4"
+    assert imageclip_encode_ext("/lib/clip.webm.vclip") == ".webm"
+
+def test_imageclip_encode_ext_uppercase_vclip():
+    assert imageclip_encode_ext("/lib/clip.MP4.VCLIP") == ".MP4"
+
+def test_imageclip_encode_ext_non_vclip_uses_own_ext():
+    assert imageclip_encode_ext("/lib/clip.mp4") == ".mp4"
+
+def test_imageclip_encode_ext_defaults_to_mp4():
+    assert imageclip_encode_ext("/lib/clip.vclip") == ".mp4"  # no inner ext
+
+def test_imageclip_edited_path_is_sibling_with_real_ext():
+    assert imageclip_edited_path("/lib/clip.mp4.vclip") == "/lib/clip.mp4.sve-imgedit.mp4"
+
+def test_imageclip_edited_path_non_vclip():
+    assert imageclip_edited_path("/lib/clip.mp4") == "/lib/clip.sve-imgedit.mp4"
+
+def test_imageclip_edited_path_same_directory():
+    import os
+    src = "/lib/sub dir/clip.webm.vclip"
+    assert os.path.dirname(imageclip_edited_path(src)) == os.path.dirname(src)
 
 
 # ── Filename scheme ──────────────────────────────────────────────────────────

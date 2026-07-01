@@ -1,5 +1,6 @@
 from stash_ops import (find_file_id_query, assign_file_mutation,
                        set_primary_mutation, generate_scene_mutation,
+                       generate_image_mutation, find_image_query,
                        find_scene_query, get_configuration_query,
                        metadata_scan_mutation, scene_merge_mutation,
                        find_edited_scenes_query, scene_markers_query,
@@ -56,6 +57,27 @@ def test_find_edited_scenes_query():
     assert "findScenes" in q
     assert ".edited." in q
     assert v == {}
+
+def test_find_image_query():
+    q, v = find_image_query("52636")
+    assert "findImage" in q
+    assert "visual_files" in q
+    assert "VideoFile" in q  # __typename discrimination for the croppable file
+    assert v == {"id": "52636"}
+
+def test_generate_image_mutation_scopes_to_image_with_overwrite():
+    q, v = generate_image_mutation("52636")
+    assert "metadataGenerate" in q
+    assert v["input"]["imageIDs"] == ["52636"]
+    assert v["input"]["overwrite"] is True
+
+def test_generate_image_mutation_regenerates_clip_preview():
+    # The animated clip preview + thumbnail are keyed to the file; after an
+    # overwrite-in-place crop they must be regenerated or they show the OLD frame.
+    q, v = generate_image_mutation("52636")
+    assert v["input"]["clipPreviews"] is True
+    assert v["input"]["imageThumbnails"] is True
+    assert "sceneIDs" not in v["input"]  # image scope only, no scene bleed
 
 def test_generate_regenerates_marker_previews():
     # Marker previews are keyed to the file; after a primary swap they must be

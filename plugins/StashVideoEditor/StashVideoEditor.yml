@@ -1,7 +1,7 @@
 # StashVideoEditor.yml
 name: Stash Video Editor
-description: Visually crop, stretch, or trim a scene's video and swap the result in as the primary file (non-destructive). Crop/stretch re-encode with Stash's own settings; trim is lossless (stream-copy) or precision (re-encode).
-version: 0.2.0
+description: Visually crop, stretch, or trim a scene's video and swap the result in as the primary file (non-destructive). Crop/stretch re-encode with Stash's own settings; trim is lossless (stream-copy) or precision (re-encode). Crop/stretch also work on image clips (.vclip) from the image page via an overwrite-in-place swap.
+version: 0.3.0
 ui:
   requires:
     - CommunityScriptsUILibrary
