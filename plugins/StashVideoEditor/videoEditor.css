@@ -1,4 +1,11 @@
 .sve-stage { position: relative; overflow: hidden; background: #000; }
+/* Safari-only: a <video> inside the modal's clipped/transformed compositing context
+   decodes but never repaints — it shows one frozen frame (play AND seek look dead),
+   while the same clip animates fine on the image page. Forcing the element onto its
+   own GPU layer makes Safari actually update it. Harmless on Chrome. Hits single-GOP
+   .vclip image clips hardest (their hardware-decode path is the one Safari won't
+   composite). Verified 2026-07-01. */
+.sve-stage video { transform: translateZ(0); -webkit-transform: translateZ(0); }
 
 .sve-crop-box {
   position: absolute; border: 2px solid #4caf50;

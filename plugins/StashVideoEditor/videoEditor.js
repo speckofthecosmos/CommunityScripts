@@ -251,9 +251,20 @@
     // Shared <video> handlers. Native controls are intentionally OFF so the player's
     // control bar never overlaps the crop box — transport lives below the stage instead.
     // Preserve the playhead when the element remounts across modes.
+    // Image clips (.vclip) are typically single-GOP (one keyframe at t=0), so Safari
+    // can't present a *paused* seek — it only decodes frames during playback. Default
+    // them to muted+looping playback so the clip animates on open (how you verify a
+    // crop across a short loop) and the scrubber works (seeking while playing presents
+    // frames). Scenes keep the normal paused/seekable behavior. playsInline everywhere
+    // so iOS Safari doesn't hijack to fullscreen.
+    const isImageClip = !!props.imageId;
     const videoProps = {
       ref: videoRef,
       src: streamUrl,
+      playsInline: true,
+      muted: isImageClip,
+      loop: isImageClip,
+      autoPlay: isImageClip,
       onLoadedMetadata: onMeta,
       onLoadedData: () => { if (videoRef.current) videoRef.current.currentTime = timeRef.current; },
       onTimeUpdate: () => {
