@@ -8,9 +8,10 @@ import urllib.request
 
 
 def offload_config():
-    """(url, token) for the Mac encode service from the container env (set in the
-    namaste compose), or (None, None) when offload is off. Stash passes the container
-    env through to plugin subprocesses, so env is the config channel."""
+    """(url, token) for the encode service from the container env (set wherever
+    your Stash container is defined — compose, DSM, etc.), or (None, None) when
+    offload is off. Stash passes the container env through to plugin
+    subprocesses, so env is the config channel."""
     url = os.environ.get("SVE_OFFLOAD_URL")
     token = os.environ.get("SVE_OFFLOAD_TOKEN")
     return (url, token) if url else (None, None)
