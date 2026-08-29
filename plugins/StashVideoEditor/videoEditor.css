@@ -81,3 +81,23 @@
 .sve-outdims { font-weight: 600; }
 .sve-hint { font-size: .85em; color: var(--gray-11, #888); margin-top: .4em; }
 .sve-open-btn { margin-top: 10px; }
+
+/* Shown when the browser can't decode the source: the stage would otherwise be
+   blank with nothing explaining why. Overlays the stage rather than replacing
+   it, so the (empty) video element stays mounted and a later successful load
+   can clear the notice. */
+.sve-unplayable {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 1.5rem;
+  gap: .5rem;
+  background: rgba(0, 0, 0, .82);
+  color: #fff;
+  z-index: 5;
+}
+.sve-unplayable p { margin: 0; max-width: 46ch; font-size: .9rem; opacity: .9; }

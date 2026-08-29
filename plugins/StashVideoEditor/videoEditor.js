@@ -69,6 +69,10 @@
     const cm = window.SVECropMath;
 
     const [natural, setNatural] = useState(null);   // {w,h} source pixels
+    // Non-null once we know the source can't be decoded here. The modal is
+    // otherwise silent about it: a codec the browser lacks renders an empty
+    // stage, and Stash's own player masks the problem by transcoding.
+    const [unplayable, setUnplayable] = useState(null);
     const [mode, setMode] = useState("crop");        // "crop" | "stretch"
     const [box, setBox] = useState(null);            // {x,y,w,h} in container px
     const [crop, setCrop] = useState(null);          // {x,y,width,height} source px
@@ -103,6 +107,7 @@
 
     const onMeta = (e) => {
       const v = e.target;
+      setUnplayable(null);   // metadata arrived: whatever we feared, it decoded
       const nat = { w: v.videoWidth, h: v.videoHeight };
       // The <video> remounts when toggling Crop/Stretch and re-fires this. Only push a
       // new `natural` when the dims actually change, so the init effect isn't handed a
@@ -113,6 +118,24 @@
       }
       setDuration(v.duration || 0);
     };
+
+    // Watchdog for the silent case: certain browsers stall on an undecodable
+    // source without ever firing `error`, leaving no event to react to and a
+    // stage that stays blank indefinitely.
+    useEffect(() => {
+      const pl = window.SVEPlayability;
+      if (!pl || natural || unplayable) return;
+      const started = Date.now();
+      const t = setTimeout(() => {
+        if (pl.stalledWithoutMetadata({
+              hasMetadata: !!naturalRef.current,
+              elapsedMs: Date.now() - started,
+              timeoutMs: pl.METADATA_TIMEOUT_MS })) {
+          setUnplayable(pl.stalledMessage());
+        }
+      }, pl.METADATA_TIMEOUT_MS + 100);
+      return () => clearTimeout(t);
+    }, [natural, unplayable]);
 
     const fmtTime = (s) => {
       if (!isFinite(s)) return "0:00";
@@ -266,6 +289,11 @@
       loop: isImageClip,
       autoPlay: isImageClip,
       onLoadedMetadata: onMeta,
+      onError: (e) => {
+        const pl = window.SVEPlayability;
+        const msg = pl && pl.unplayableMessage(e.target && e.target.error);
+        if (msg) setUnplayable(msg);
+      },
       onLoadedData: () => { if (videoRef.current) videoRef.current.currentTime = timeRef.current; },
       onTimeUpdate: () => {
         const v = videoRef.current; if (!v) return;
@@ -339,7 +367,10 @@
         React.createElement(Modal.Title, null, "Crop & re-encode")),
       React.createElement(Modal.Body, null,
         React.createElement("div", { className: "sve-stage", style: { width: CONTAINER.w, height: CONTAINER.h } },
-          ...stageChildren
+          ...stageChildren,
+          unplayable && React.createElement("div", { className: "sve-unplayable" },
+            React.createElement("strong", null, "Can't edit this file"),
+            React.createElement("p", null, unplayable))
         ),
         React.createElement("div", { className: "sve-transport" },
           React.createElement(Button, {
@@ -366,7 +397,7 @@
       ),
       React.createElement(Modal.Footer, null,
         React.createElement(Button, { variant: "secondary", onClick: props.onHide }, "Cancel"),
-        React.createElement(Button, { variant: "primary", disabled: submitDisabled, onClick: submit }, applyLabel)
+        React.createElement(Button, { variant: "primary", disabled: submitDisabled || !!unplayable, onClick: submit }, applyLabel)
       )
     );
   }
@@ -410,6 +441,7 @@
     const [range, setRange] = useState(null);   // {in, out} (source seconds)
     const [lossless, setLossless] = useState(true);
     const [film, setFilm] = useState(null);     // {url, cues, sheet:{w,h}} or null
+    const [unplayable, setUnplayable] = useState(null);  // see EditorModal
 
     const videoRef = useRef(null);
     const filmRef = useRef(null);               // timeline element, for clientX→time
@@ -496,6 +528,11 @@
       ref: videoRef,
       src: streamUrl,
       onLoadedMetadata: onMeta,
+      onError: (e) => {
+        const pl = window.SVEPlayability;
+        const msg = pl && pl.unplayableMessage(e.target && e.target.error);
+        if (msg) setUnplayable(msg);
+      },
       onLoadedData: () => { if (videoRef.current) videoRef.current.currentTime = timeRef.current; },
       onTimeUpdate: () => {
         const v = videoRef.current; if (!v) return;
@@ -574,7 +611,10 @@
         React.createElement(Modal.Title, null, "Trim")),
       React.createElement(Modal.Body, null,
         React.createElement("div", { className: "sve-stage", style: { width: CONTAINER.w, height: CONTAINER.h } },
-          React.createElement("video", Object.assign({ key: "video" }, videoProps))
+          React.createElement("video", Object.assign({ key: "video" }, videoProps)),
+          unplayable && React.createElement("div", { className: "sve-unplayable" },
+            React.createElement("strong", null, "Can't edit this file"),
+            React.createElement("p", null, unplayable))
         ),
         timeline,
         React.createElement("div", { className: "sve-transport" },
@@ -618,7 +658,7 @@
       ),
       React.createElement(Modal.Footer, null,
         React.createElement(Button, { variant: "secondary", onClick: props.onHide }, "Cancel"),
-        React.createElement(Button, { variant: "primary", disabled: !valid.valid, onClick: submit }, submitLabel)
+        React.createElement(Button, { variant: "primary", disabled: !valid.valid || !!unplayable, onClick: submit }, submitLabel)
       )
     );
   }
