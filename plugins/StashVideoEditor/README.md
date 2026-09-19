@@ -5,6 +5,22 @@ Re-encodes server-side using Stash's configured transcode settings, writes a new
 file next to the original, and sets it as the scene's primary file (the original
 is kept as a secondary file — nothing is overwritten or deleted).
 
+## Placing the crop precisely
+
+The stage draws the source scaled down (a 1080p video renders at 0.375x), and the
+crop box dims everything outside itself — so a letterbox bar and a dimmed strip of
+real content look the same there. Two controls fix that:
+
+- **Magnifier.** Hover or drag any of the 8 handles and a panel shows the pixels
+  around that edge at 1:1 source resolution, undimmed, with a hairline on the cut
+  and the source-pixel coordinate underneath. It parks on the far side of the edge
+  so it never covers the content you're framing.
+- **Arrow keys.** They nudge the last-touched handle by 2 source pixels (Shift:
+  10). The step is even because the crop is rounded to even dimensions for h.264,
+  so an odd step would sometimes produce no change at all.
+
+**Auto-crop bars** remains the fast first pass; these are the fine-tuning backstop.
+
 ## Image clips
 
 The same **Crop & re-encode** button appears on the image detail page for image

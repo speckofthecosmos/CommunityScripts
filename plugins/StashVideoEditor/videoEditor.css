@@ -34,6 +34,28 @@
 .sve-handle-sw { left: -7px;  bottom: -7px; cursor: nesw-resize; }
 .sve-handle-w  { left: -7px;  top: 50%;     transform: translateY(-50%); cursor: ew-resize; }
 
+/* The edge that arrow keys will nudge. Subtle — it marks a target, not a selection. */
+.sve-handle-active { box-shadow: 0 0 0 2px rgba(255,255,255,0.55); }
+
+/* Magnifier: a 1:1 source-pixel view of the edge under the cursor. Deliberately
+   OUTSIDE the crop box's dimming (which is what makes a black bar and a dimmed
+   strip of content look identical on the stage), and pointer-transparent so it can
+   never swallow a drag. `pixelated` keeps the browser from smoothing the source
+   pixels back into the blur we are trying to see through. */
+.sve-loupe {
+  position: absolute; z-index: 4; pointer-events: none;
+  border: 1px solid rgba(255,255,255,0.65); border-radius: 3px;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.7); background: #000; overflow: hidden;
+}
+.sve-loupe-canvas {
+  display: block;
+  image-rendering: pixelated; image-rendering: -moz-crisp-edges; image-rendering: crisp-edges;
+}
+.sve-loupe-label {
+  font-size: .72rem; font-variant-numeric: tabular-nums; text-align: center;
+  padding: 2px 4px; color: #fff; background: rgba(0,0,0,0.75); white-space: nowrap;
+}
+
 .sve-transport { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .sve-play-btn { min-width: 2.6em; font-family: monospace; }
 .sve-seek { flex: 1; }
@@ -80,6 +102,7 @@
 .sve-controls input { width: 6em; margin: 0 .4em; }
 .sve-outdims { font-weight: 600; }
 .sve-hint { font-size: .85em; color: var(--gray-11, #888); margin-top: .4em; }
+.sve-cropinfo { font-size: .85em; font-variant-numeric: tabular-nums; color: var(--gray-11, #aaa); margin-top: .5em; }
 .sve-open-btn { margin-top: 10px; }
 
 /* Shown when the browser can't decode the source: the stage would otherwise be

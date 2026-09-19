@@ -7,18 +7,22 @@
   const { useState, useRef, useCallback, useEffect } = React;
 
   const CONTAINER = { w: 720, h: 405 };
+  const LOUPE = { w: 184, h: 140 };   // magnifier panel, in container px (= source px at 1:1)
   const MIN_BOX = 20;
   const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"]; // 8 resize handles
 
   // Presentational crop/frame rectangle with 8 resize handles + a draggable body.
-  // props: { box:{x,y,w,h}, mode:"crop"|"stretch", onHandleDown:(handle)=>(e)=>void }
+  // props: { box:{x,y,w,h}, mode:"crop"|"stretch", onHandleDown:(handle)=>(e)=>void,
+  //          onHandleEnter?, onHandleLeave?, activeHandle? }
   function CropBox(props) {
     const box = props.box;
     const handleEls = HANDLES.map((h) =>
       React.createElement("div", {
         key: h,
-        className: "sve-handle sve-handle-" + h,
+        className: "sve-handle sve-handle-" + h + (props.activeHandle === h ? " sve-handle-active" : ""),
         onMouseDown: props.onHandleDown(h),
+        onMouseEnter: props.onHandleEnter && props.onHandleEnter(h),
+        onMouseLeave: props.onHandleLeave && props.onHandleLeave(h),
       })
     );
     return React.createElement("div", {
@@ -26,6 +30,40 @@
       style: { left: box.x + "px", top: box.y + "px", width: box.w + "px", height: box.h + "px" },
       onMouseDown: props.onHandleDown("move"),
     }, handleEls);
+  }
+
+  // Did the last drawImage actually paint anything? Sampled at the corners and centre;
+  // a tainted canvas throws, which counts as unusable too.
+  function canvasIsBlank(ctx, w, h) {
+    const pts = [[w >> 1, h >> 1], [1, 1], [w - 2, 1], [1, h - 2], [w - 2, h - 2]];
+    try {
+      for (let i = 0; i < pts.length; i++) {
+        if (ctx.getImageData(pts[i][0], pts[i][1], 1, 1).data[3] !== 0) return false;
+      }
+      return true;
+    } catch (err) {
+      return true;
+    }
+  }
+
+  // The crop edge, drawn onto the loupe so it lines up with real pixels: a dark halo
+  // under a green hairline (legible over both a black bar and bright content), plus a
+  // thin red wash on the side being cut away so which is which needs no thinking.
+  function drawHairline(ctx, s) {
+    const CUT = "rgba(244,67,54,0.22)", HALO = "rgba(0,0,0,0.65)", LINE = "#4caf50";
+    const band = 8;
+    if (s.hair.y != null) {
+      ctx.fillStyle = CUT;
+      ctx.fillRect(0, s.keep.y === "below" ? s.hair.y - band : s.hair.y, LOUPE.w, band);
+      ctx.fillStyle = HALO; ctx.fillRect(0, s.hair.y - 2, LOUPE.w, 4);
+      ctx.fillStyle = LINE; ctx.fillRect(0, s.hair.y - 0.5, LOUPE.w, 1);
+    }
+    if (s.hair.x != null) {
+      ctx.fillStyle = CUT;
+      ctx.fillRect(s.keep.x === "right" ? s.hair.x - band : s.hair.x, 0, band, LOUPE.h);
+      ctx.fillStyle = HALO; ctx.fillRect(s.hair.x - 2, 0, 4, LOUPE.h);
+      ctx.fillStyle = LINE; ctx.fillRect(s.hair.x - 0.5, 0, 1, LOUPE.h);
+    }
   }
 
   async function runCropTask(sceneId, crop, outW, outH) {
@@ -67,6 +105,7 @@
     // props: { sceneId, show, onHide }
     const { Modal, Button } = PluginApi.libraries.Bootstrap; // lazy: ready at render, not at load
     const cm = window.SVECropMath;
+    const lp = window.SVECropLoupe;
 
     const [natural, setNatural] = useState(null);   // {w,h} source pixels
     // Non-null once we know the source can't be decoded here. The modal is
@@ -82,8 +121,15 @@
     const [playing, setPlaying] = useState(false);   // our own transport (native controls removed)
     const [curTime, setCurTime] = useState(0);
     const [duration, setDuration] = useState(0);
+    const [loupeHandle, setLoupeHandle] = useState(null);   // edge the magnifier is showing
+    const [activeHandle, setActiveHandle] = useState(null); // sticky keyboard-nudge target
+    const [loupeBlind, setLoupeBlind] = useState(false);    // this video can't be read into a canvas
 
     const drag = useRef(null);
+    const loupeCanvas = useRef(null);
+    const loupeSampleRef = useRef(null); // latest geometry, read by the redraw loop
+    const loupeRaf = useRef(null);
+    const loupeTimer = useRef(null);
     const videoRef = useRef(null);
     const timeRef = useRef(0);                        // preserve playhead across mode remounts
     const frozen = useRef(null);                      // {crop, baseFrame, cropBox} captured on entering stretch
@@ -165,6 +211,17 @@
       setCrop(cm.rectToSourceCrop(initial, rnd, natural));
     }, [natural, cm]);
 
+    // Show the magnifier for whichever edge is being touched, and remember it as the
+    // keyboard-nudge target. Hover alone is enough — you can inspect an edge without
+    // committing to a drag that might move it.
+    const showLoupe = (handle) => {
+      if (loupeTimer.current) { clearTimeout(loupeTimer.current); loupeTimer.current = null; }
+      setLoupeHandle(handle);
+      if (handle !== "move") setActiveHandle(handle);
+    };
+    const onHandleEnter = (handle) => () => { if (!drag.current) showLoupe(handle); };
+    const onHandleLeave = () => () => { if (!drag.current) setLoupeHandle(null); };
+
     const onHandleDown = (handle) => (e) => {
       e.preventDefault();
       e.stopPropagation(); // keep a handle's resize from also triggering the body's "move"
@@ -172,6 +229,7 @@
         ? rendered
         : { x: 0, y: 0, w: CONTAINER.w, h: CONTAINER.h }; // stretch frame may exceed the video rect
       drag.current = { handle, sx: e.clientX, sy: e.clientY, start: box, bounds, mode, rendered };
+      showLoupe(handle);
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     };
@@ -184,9 +242,99 @@
     };
     const onUp = () => {
       drag.current = null;
+      setLoupeHandle(null);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
+
+    // --- Magnifier ("loupe") -------------------------------------------------
+    // The stage draws the source at a fraction of its real size (0.375x for 1080p)
+    // and the crop box dims everything outside itself, so a letterbox bar and a
+    // dimmed strip of content are indistinguishable there. The loupe re-draws the
+    // pixels around the dragged edge at 1:1, undimmed, with a hairline on the cut.
+    const loupeOn = !!(lp && !loupeBlind && mode === "crop" && box && natural && rendered
+      && loupeHandle && lp.hasLoupe(loupeHandle));
+    const sample = loupeOn ? lp.loupeSample(box, loupeHandle, rendered, natural, LOUPE) : null;
+    const loupePos = loupeOn ? lp.loupePlacement(box, loupeHandle, CONTAINER, LOUPE) : null;
+    const loupeText = loupeOn ? lp.formatReadout(lp.edgeReadout(box, loupeHandle, rendered, natural)) : "";
+    loupeSampleRef.current = sample; // the redraw loop reads the newest geometry, not a stale closure
+
+    // Repaint on every animation frame while visible: one loop covers dragging,
+    // nudging, scrubbing and playback without a listener for each.
+    useEffect(() => {
+      if (!loupeOn) return;
+      let stopped = false;
+      let blankChecked = false;
+      const draw = () => {
+        if (stopped) return;
+        const s = loupeSampleRef.current;
+        const canvas = loupeCanvas.current;
+        const v = videoRef.current;
+        if (s && canvas && v && v.readyState >= 2) {
+          const dpr = window.devicePixelRatio || 1;
+          if (canvas.width !== Math.round(LOUPE.w * dpr)) {
+            canvas.width = Math.round(LOUPE.w * dpr);
+            canvas.height = Math.round(LOUPE.h * dpr);
+          }
+          const ctx = canvas.getContext("2d");
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.imageSmoothingEnabled = false; // nearest-neighbour: show real pixels, don't invent them
+          ctx.clearRect(0, 0, LOUPE.w, LOUPE.h);
+          try {
+            ctx.drawImage(v, s.src.x, s.src.y, s.src.w, s.src.h, 0, 0, LOUPE.w, LOUPE.h);
+          } catch (err) {
+            console.warn("[StashVideoEditor] loupe: can't read this video into a canvas", err);
+            setLoupeBlind(true);
+            return;
+          }
+          // A browser that won't composite this video into a canvas no-ops silently,
+          // leaving the canvas fully transparent. A real black bar is opaque, so alpha
+          // is a clean discriminator — and cheaper than guessing from the user agent.
+          // Checked once per open, not per frame.
+          if (!blankChecked) {
+            blankChecked = true;
+            if (canvasIsBlank(ctx, canvas.width, canvas.height)) {
+              console.warn("[StashVideoEditor] loupe: canvas draw produced nothing; hiding magnifier");
+              setLoupeBlind(true);
+              return;
+            }
+          }
+          drawHairline(ctx, s);
+        }
+        loupeRaf.current = requestAnimationFrame(draw);
+      };
+      draw();
+      return () => {
+        stopped = true;
+        if (loupeRaf.current) cancelAnimationFrame(loupeRaf.current);
+        loupeRaf.current = null;
+      };
+    }, [loupeOn]);
+
+    useEffect(() => () => { if (loupeTimer.current) clearTimeout(loupeTimer.current); }, []);
+
+    // Arrow keys nudge the last-touched edge by exactly 2 source pixels (Shift: 10).
+    // A mouse cannot resolve one source pixel on a 720px stage, which is the other
+    // half of "took off too much or too little".
+    useEffect(() => {
+      if (!lp || !props.show || mode !== "crop" || !activeHandle || !box || !rendered || !natural) return;
+      const onKey = (e) => {
+        const t = e.target;
+        if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return; // leave the W/H fields their arrows
+        const d = lp.nudgeDelta(e.key, e.shiftKey);
+        if (!d) return;
+        e.preventDefault();
+        const perSrcPx = rendered.w / natural.w; // source px → container px
+        const nb = cm.resizeBox(box, activeHandle, d.dx * perSrcPx, d.dy * perSrcPx, rendered, MIN_BOX);
+        setBox(nb);
+        commit(nb, "crop", rendered);
+        setLoupeHandle(activeHandle); // surface the loupe so you can see the nudge land
+        if (loupeTimer.current) clearTimeout(loupeTimer.current);
+        loupeTimer.current = setTimeout(() => setLoupeHandle(null), 1400);
+      };
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    }, [lp, props.show, mode, activeHandle, box, rendered, natural, cm, commit]);
 
     // Auto-crop: sample the current frame to a canvas, detect the sharp content box
     // (strips black bars AND blurred-zoom padding), and snap the crop box to it.
@@ -330,9 +478,21 @@
           key: "video",
           style: { width: "100%", height: "100%", objectFit: "contain" },
         })),
-        box && React.createElement(CropBox, { key: "box", box, mode, onHandleDown }),
+        box && React.createElement(CropBox, {
+          key: "box", box, mode, onHandleDown, onHandleEnter, onHandleLeave, activeHandle,
+        }),
       ];
     }
+
+    const loupeEl = loupeOn && React.createElement("div", {
+      key: "loupe", className: "sve-loupe",
+      style: { left: loupePos.left + "px", top: loupePos.top + "px", width: LOUPE.w + "px" },
+    },
+      React.createElement("canvas", {
+        ref: loupeCanvas, className: "sve-loupe-canvas",
+        style: { width: LOUPE.w + "px", height: LOUPE.h + "px" },
+      }),
+      React.createElement("div", { className: "sve-loupe-label" }, loupeText));
 
     const controls = mode === "stretch"
       ? React.createElement("div", { className: "sve-controls" },
@@ -343,7 +503,14 @@
       : React.createElement("div", { className: "sve-controls" },
           "Output W ", React.createElement("input", { type: "number", value: outW, onChange: (e) => setOutW(e.target.value), placeholder: crop ? crop.width : "" }),
           " H ", React.createElement("input", { type: "number", value: outH, onChange: (e) => setOutH(e.target.value), placeholder: crop ? crop.height : "" }),
-          React.createElement("div", { className: "sve-hint" }, "Leave blank to keep crop size (crop only). Set to stretch numerically, or switch to Stretch to do it visually."));
+          crop && React.createElement("div", { className: "sve-cropinfo" },
+            "Crop " + crop.width + "×" + crop.height + " at (" + crop.x + ", " + crop.y + ") · cut " +
+            (natural ? (natural.w - crop.width) + "px wide, " + (natural.h - crop.height) + "px tall" : "—")),
+          React.createElement("div", { className: "sve-hint" },
+            loupeBlind
+              ? "Leave blank to keep crop size. Arrow keys nudge the last-touched handle 2px (Shift: 10px)."
+              : "Hover or drag a handle for a 1:1 magnified view of that edge. Arrow keys nudge it 2px (Shift: 10px)."),
+          React.createElement("div", { className: "sve-hint" }, "Leave output blank to keep the crop size. Set it to stretch numerically, or switch to Stretch to do it visually."));
 
     const submitDisabled = mode === "stretch" ? !outDims : !crop;
 
@@ -368,6 +535,7 @@
       React.createElement(Modal.Body, null,
         React.createElement("div", { className: "sve-stage", style: { width: CONTAINER.w, height: CONTAINER.h } },
           ...stageChildren,
+          loupeEl,
           unplayable && React.createElement("div", { className: "sve-unplayable" },
             React.createElement("strong", null, "Can't edit this file"),
             React.createElement("p", null, unplayable))
