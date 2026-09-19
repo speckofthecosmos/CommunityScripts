@@ -137,14 +137,47 @@
   }
 
   // Compact caption text. A corner moves two edges, so it drops the "cut" figures
-  // rather than overflow the panel.
+  // rather than overflow the panel. Naming the direction ("cut 138px above") is what
+  // makes the readout answer "which side of the bar actually goes?" on its own.
+  const CUT_SIDE = { top: "above", bottom: "below", left: "left", right: "right" };
   function formatReadout(r) {
     if (!r) return "";
     if (r.x && r.y) return "x " + r.x.value + " · y " + r.y.value;
     const p = r.x || r.y;
     if (!p) return "";
     const axis = r.x ? "x" : "y";
-    return p.label + " " + axis + " " + p.value + " · cut " + p.cut + "px";
+    return p.label + " " + axis + " " + p.value + " · cut " + p.cut + "px " + CUT_SIDE[p.label];
+  }
+
+  // Where to paint the "this is being removed" marks, in loupe px.
+  //
+  // Everything goes on the REMOVED side so the kept pixels are never painted over —
+  // the whole point is to judge the first surviving row of real content. `wash` covers
+  // the entire doomed region (not a token band, so the answer is unmissable) and `line`
+  // is the single pixel row/column at the boundary, which side depends on the edge:
+  // a crop's y is the first KEPT row (line goes on y-1), while y+height is the first
+  // REMOVED row (line goes on it).
+  function cutBands(s, loupe) {
+    const washes = [], lines = [];
+    if (s.hair.y != null) {
+      if (s.keep.y === "below") { // removed region is above the boundary
+        washes.push({ x: 0, y: 0, w: loupe.w, h: s.hair.y });
+        lines.push({ x: 0, y: Math.max(0, s.hair.y - 1), w: loupe.w, h: 1 });
+      } else {
+        washes.push({ x: 0, y: s.hair.y, w: loupe.w, h: loupe.h - s.hair.y });
+        lines.push({ x: 0, y: Math.min(loupe.h - 1, s.hair.y), w: loupe.w, h: 1 });
+      }
+    }
+    if (s.hair.x != null) {
+      if (s.keep.x === "right") { // removed region is left of the boundary
+        washes.push({ x: 0, y: 0, w: s.hair.x, h: loupe.h });
+        lines.push({ x: Math.max(0, s.hair.x - 1), y: 0, w: 1, h: loupe.h });
+      } else {
+        washes.push({ x: s.hair.x, y: 0, w: loupe.w - s.hair.x, h: loupe.h });
+        lines.push({ x: Math.min(loupe.w - 1, s.hair.x), y: 0, w: 1, h: loupe.h });
+      }
+    }
+    return { washes: washes, lines: lines };
   }
 
   // Arrow-key nudge, in source px. Returns null for keys we do not handle so the
@@ -164,7 +197,7 @@
     NUDGE_STEP: NUDGE_STEP, NUDGE_STEP_COARSE: NUDGE_STEP_COARSE,
     hasLoupe: hasLoupe, anchorPoint: anchorPoint, loupeSample: loupeSample,
     loupePlacement: loupePlacement, edgeReadout: edgeReadout,
-    formatReadout: formatReadout, nudgeDelta: nudgeDelta,
+    formatReadout: formatReadout, cutBands: cutBands, nudgeDelta: nudgeDelta,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.SVECropLoupe = api;

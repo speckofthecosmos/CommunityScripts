@@ -46,23 +46,54 @@
     }
   }
 
-  // The crop edge, drawn onto the loupe so it lines up with real pixels: a dark halo
-  // under a green hairline (legible over both a black bar and bright content), plus a
-  // thin red wash on the side being cut away so which is which needs no thinking.
-  function drawHairline(ctx, s) {
-    const CUT = "rgba(244,67,54,0.22)", HALO = "rgba(0,0,0,0.65)", LINE = "#4caf50";
-    const band = 8;
-    if (s.hair.y != null) {
-      ctx.fillStyle = CUT;
-      ctx.fillRect(0, s.keep.y === "below" ? s.hair.y - band : s.hair.y, LOUPE.w, band);
-      ctx.fillStyle = HALO; ctx.fillRect(0, s.hair.y - 2, LOUPE.w, 4);
-      ctx.fillStyle = LINE; ctx.fillRect(0, s.hair.y - 0.5, LOUPE.w, 1);
-    }
-    if (s.hair.x != null) {
-      ctx.fillStyle = CUT;
-      ctx.fillRect(s.keep.x === "right" ? s.hair.x - band : s.hair.x, 0, band, LOUPE.h);
-      ctx.fillStyle = HALO; ctx.fillRect(s.hair.x - 2, 0, 4, LOUPE.h);
-      ctx.fillStyle = LINE; ctx.fillRect(s.hair.x - 0.5, 0, 1, LOUPE.h);
+  // Mark the cut on the loupe. Every mark lands on the side being REMOVED — the whole
+  // region gets a red wash and the boundary pixel row/column gets a solid line — so the
+  // kept pixels are never painted over and "which side goes" needs no interpretation.
+  // Geometry (including which row the line belongs on, which differs between a top and
+  // a bottom edge) comes from cropLoupe.cutBands so it is unit-tested rather than
+  // eyeballed here.
+  function drawCut(ctx, s, lp) {
+    const bands = lp.cutBands(s, LOUPE);
+    ctx.fillStyle = "rgba(244,67,54,0.28)";
+    bands.washes.forEach((r) => { if (r.w > 0 && r.h > 0) ctx.fillRect(r.x, r.y, r.w, r.h); });
+    bands.lines.forEach((r) => {
+      ctx.fillStyle = "rgba(0,0,0,0.75)"; // halo, also on the removed side only
+      ctx.fillRect(r.x - (r.w === 1 ? 1 : 0), r.y - (r.h === 1 ? 1 : 0),
+                   r.w === 1 ? 2 : r.w, r.h === 1 ? 2 : r.h);
+      ctx.fillStyle = "#ff5252";
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+    });
+    drawLegend(ctx, s);
+  }
+
+  // A two-word legend in the corners: which half is going, which is staying. Cheaper to
+  // read than a caption, and it survives being glanced at mid-drag.
+  function drawLegend(ctx, s) {
+    const tag = (text, x, y, align, color) => {
+      ctx.font = "600 9px system-ui, sans-serif";
+      ctx.textAlign = align;
+      ctx.textBaseline = "middle";
+      const w = ctx.measureText(text).width + 8;
+      ctx.fillStyle = "rgba(0,0,0,0.72)";
+      ctx.fillRect(align === "right" ? x - w : x, y - 7, w, 14);
+      ctx.fillStyle = color;
+      ctx.fillText(text, align === "right" ? x - 4 : x + 4, y);
+    };
+    const CUT = "#ff8a80", KEEP = "#a5d6a7";
+    if (s.hair.y != null && s.hair.x == null) {
+      const above = s.keep.y === "below";
+      tag(above ? "CUT" : "KEEP", 4, 9, "left", above ? CUT : KEEP);
+      tag(above ? "KEEP" : "CUT", 4, LOUPE.h - 9, "left", above ? KEEP : CUT);
+    } else if (s.hair.x != null && s.hair.y == null) {
+      const left = s.keep.x === "right";
+      tag(left ? "CUT" : "KEEP", 4, 9, "left", left ? CUT : KEEP);
+      tag(left ? "KEEP" : "CUT", LOUPE.w - 4, 9, "right", left ? KEEP : CUT);
+    } else if (s.hair.x != null) {
+      // Corner: only the quadrant inside BOTH kept sides survives, so label that one.
+      const kx = s.keep.x;                                   // "left" | "right"
+      const ky = s.keep.y === "below" ? "bottom" : "top";
+      tag("KEEP", kx === "left" ? 4 : LOUPE.w - 4, ky === "top" ? 9 : LOUPE.h - 9,
+          kx === "left" ? "left" : "right", KEEP);
     }
   }
 
@@ -299,7 +330,7 @@
               return;
             }
           }
-          drawHairline(ctx, s);
+          drawCut(ctx, s, lp);
         }
         loupeRaf.current = requestAnimationFrame(draw);
       };

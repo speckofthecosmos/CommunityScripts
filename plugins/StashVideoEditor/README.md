@@ -12,9 +12,12 @@ crop box dims everything outside itself — so a letterbox bar and a dimmed stri
 real content look the same there. Two controls fix that:
 
 - **Magnifier.** Hover or drag any of the 8 handles and a panel shows the pixels
-  around that edge at 1:1 source resolution, undimmed, with a hairline on the cut
-  and the source-pixel coordinate underneath. It parks on the far side of the edge
-  so it never covers the content you're framing.
+  around that edge at 1:1 source resolution, undimmed. The region being removed is
+  washed red and labelled CUT, the surviving side is labelled KEEP, and the marker
+  line sits on the boundary pixel *on the removed side* — so no mark ever covers a
+  pixel you are keeping. The caption names the edge coordinate, how many pixels it
+  removes and from which side (`top y 138 · cut 138px above`). The panel parks on
+  the far side of the edge so it never covers the content you're framing.
 - **Arrow keys.** They nudge the last-touched handle by 2 source pixels (Shift:
   10). The step is even because the crop is rounded to even dimensions for h.264,
   so an odd step would sometimes produce no change at all.

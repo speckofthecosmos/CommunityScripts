@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const {
   NUDGE_STEP, NUDGE_STEP_COARSE,
-  anchorPoint, loupeSample, loupePlacement, edgeReadout, formatReadout, nudgeDelta,
+  anchorPoint, loupeSample, loupePlacement, edgeReadout, formatReadout, cutBands, nudgeDelta,
 } = require("./cropLoupe.js");
 
 // A 1920x1080 source in the modal's 720x405 stage renders edge-to-edge:
@@ -98,13 +98,66 @@ test("edgeReadout gives both axes for a corner handle", () => {
   assert.deepStrictEqual(r.y, { label: "top", value: 138, cut: 138 });
 });
 
-test("formatReadout is compact enough for the loupe caption", () => {
+test("formatReadout names which side is cut, not just how much", () => {
   assert.strictEqual(
     formatReadout(edgeReadout(LETTERBOXED, "n", RENDERED, NATURAL)),
-    "top y 138 · cut 138px");
+    "top y 138 · cut 138px above");
+  assert.strictEqual(
+    formatReadout(edgeReadout(LETTERBOXED, "s", RENDERED, NATURAL)),
+    "bottom y 942 · cut 138px below");
+  assert.strictEqual(
+    formatReadout(edgeReadout(LETTERBOXED, "w", RENDERED, NATURAL)),
+    "left x 0 · cut 0px left");
   assert.strictEqual(
     formatReadout(edgeReadout(LETTERBOXED, "nw", RENDERED, NATURAL)),
     "x 0 · y 138");
+});
+
+test("cutBands paints the whole removed side and never a kept pixel", () => {
+  // Top edge: the crop's y is the first KEPT row, so the marker line belongs on
+  // the row above it and nothing at or below the hairline may be painted.
+  const top = loupeSample(LETTERBOXED, "n", RENDERED, NATURAL, LOUPE);
+  const b = cutBands(top, LOUPE);
+  assert.deepStrictEqual(b.washes, [{ x: 0, y: 0, w: 184, h: 70 }]);
+  assert.deepStrictEqual(b.lines, [{ x: 0, y: 69, w: 184, h: 1 }]);
+  for (const r of b.washes.concat(b.lines)) {
+    assert.ok(r.y + r.h <= top.hair.y, "mark must stay above the first kept row");
+  }
+
+  // Bottom edge: y+height is the first REMOVED row, so the line sits ON the hairline
+  // and the wash runs to the bottom of the panel.
+  const bot = loupeSample(LETTERBOXED, "s", RENDERED, NATURAL, LOUPE);
+  const bb = cutBands(bot, LOUPE);
+  assert.deepStrictEqual(bb.washes, [{ x: 0, y: bot.hair.y, w: 184, h: LOUPE.h - bot.hair.y }]);
+  assert.deepStrictEqual(bb.lines, [{ x: 0, y: bot.hair.y, w: 184, h: 1 }]);
+  for (const r of bb.washes.concat(bb.lines)) {
+    assert.ok(r.y >= bot.hair.y, "mark must stay at or below the first removed row");
+  }
+});
+
+test("cutBands handles vertical edges and both axes at a corner", () => {
+  const left = loupeSample(LETTERBOXED, "w", RENDERED, NATURAL, LOUPE);
+  const lb = cutBands(left, LOUPE);
+  assert.strictEqual(lb.washes.length, 1);
+  assert.deepStrictEqual(lb.washes[0], { x: 0, y: 0, w: left.hair.x, h: LOUPE.h });
+  // A corner moves two edges, so it marks two removed regions.
+  const corner = loupeSample(LETTERBOXED, "se", RENDERED, NATURAL, LOUPE);
+  const cb = cutBands(corner, LOUPE);
+  assert.strictEqual(cb.washes.length, 2);
+  assert.strictEqual(cb.lines.length, 2);
+});
+
+test("cutBands stays inside the panel when the edge is flush with the frame", () => {
+  // Crop at the very top of the source: nothing is removed, so the wash is empty
+  // and the line must not be pushed to a negative row.
+  const s = loupeSample(FULL, "n", RENDERED, NATURAL, LOUPE);
+  const b = cutBands(s, LOUPE);
+  assert.strictEqual(b.washes[0].h, 0);
+  assert.strictEqual(b.lines[0].y, 0);
+  const se = cutBands(loupeSample(FULL, "se", RENDERED, NATURAL, LOUPE), LOUPE);
+  for (const r of se.lines) {
+    assert.ok(r.x >= 0 && r.x < LOUPE.w && r.y >= 0 && r.y < LOUPE.h);
+  }
 });
 
 test("nudgeDelta steps in even source pixels", () => {
